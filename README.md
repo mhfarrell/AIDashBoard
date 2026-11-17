@@ -74,16 +74,10 @@ The installer renames the Pi to **AIdashboard**, makes sure avahi (mDNS) is runn
 port 80 — so the dashboard is at **http://AIdashboard.local** from any device on your network
 (use `AIDASH_HOSTNAME=name` to pick another name, `AIDASH_KEEP_HOSTNAME=1` to keep the current one).
 
-Then, from the PC where you've been running it, copy your settings, invoices and API keys across in one go
-(logins are deliberately not copied — connect those on the Pi):
+Then open **http://AIdashboard.local → Settings** and add whichever platforms you use — everything is
+optional, and platforms you skip just show "Not set up":
 
-```sh
-python tools/push_to_pi.py --to http://AIdashboard.local
-```
-
-Then open **http://AIdashboard.local → Settings** (or set everything up there directly if you're starting fresh):
-
-1. **API keys** — paste OpenRouter, OpenCode Go, Moonshot, Kimi Code and (optionally) Gemini keys.
+1. **API keys** — paste OpenRouter, OpenCode Go, Moonshot, Kimi Code and/or Gemini keys.
 2. **Subscription logins** — *Connect* Claude, ChatGPT and Antigravity. Each creates a **separate**
    login for the Pi (forced fresh sign-in with `prompt=login`), so it shouldn't sign out Claude Code,
    Codex CLI or other tools using the same account — check they're still signed in after your first connect.
@@ -93,10 +87,21 @@ Then open **http://AIdashboard.local → Settings** (or set everything up there 
      `localhost:1455/...` URL your browser fails to open.
    * Antigravity: Google's desktop-app sign-in needs the OAuth client ID + secret that ship inside the
      Antigravity app (public values, not your credentials) — enter them once under *Antigravity OAuth
-     client* (`push_to_pi.py` copies them if your PC install has them), then *Connect* and paste the
-     `localhost:51121/...` URL.
-3. **Subscriptions** — enter what you actually pay (amount + currency + start month).
+     client*, then *Connect* and paste the `localhost:51121/...` URL. Without them, skip Antigravity —
+     everything else works.
+3. **Subscriptions** — leave the amount empty to use the list price of the plan detected from your
+   login (Claude, ChatGPT, OpenCode Go), or type what you actually pay.
 4. Optional: set an **admin password** so only you can change settings/logins.
+
+**Already running it on another machine?** Copy its settings, invoices and API keys to the Pi in one go
+(logins are deliberately not copied — connect those on the Pi):
+
+```sh
+python tools/push_to_pi.py --from ./data --to http://AIdashboard.local
+```
+
+The dashboard keeps its own history from first run — provider APIs don't expose past usage, so there is
+no backfill; add past charges as invoices if you want them.
 
 ## Security
 
