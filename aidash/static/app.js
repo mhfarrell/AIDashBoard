@@ -815,12 +815,15 @@
       '<div class="table-scroll"><table class="edit-table" id="subs-table"><thead><tr><th>Name</th><th>Platform</th><th>Amount</th><th>Currency</th><th>Start month</th><th>Active</th><th></th></tr></thead><tbody>' +
       (c.subscriptions || []).map(subRow).join("") + '</tbody></table></div><div class="inline" style="margin-top:10px">' +
       '<button class="btn small ghost" id="sub-add">+ Add subscription</button><button class="btn primary small" id="subs-save">Save subscriptions</button></div></section>';
-    html += '<section class="card"><h2>Invoices &amp; manual entries</h2><p class="help">Real charges from your invoices, or costs no API reports (e.g. Gemini API billing). ' +
+    var nMan = (c.manual_entries || []).length;
+    html += '<details class="card advanced"' + (S.advOpen ? " open" : "") + '><summary><h2>Advanced: invoices &amp; manual entries</h2>' +
+      '<span class="muted small">' + (nMan ? nMan + " entr" + (nMan === 1 ? "y" : "ies") : "not needed most months — spend is tracked automatically") + "</span></summary>" +
+      '<p class="help">Only for costs no API reports (Gemini API billing, Anthropic console credits, Claude extra-usage <i>purchases</i>) or to correct a month (e.g. a prorated upgrade). ' +
       "<b>Entries for a platform and month replace the automatic figure for that column.</b> " +
       "“spend” adds to the total · “bought” goes in the Bought column · “bought &amp; used” counts in both · “subscription charge” replaces that month's subscription.</p>" +
       '<div class="table-scroll"><table class="edit-table" id="man-table"><thead><tr><th>Month</th><th>Platform</th><th>Type</th><th>Amount</th><th>Currency</th><th>Note</th><th></th></tr></thead><tbody>' +
       (c.manual_entries || []).map(manRow).join("") + '</tbody></table></div><div class="inline" style="margin-top:10px">' +
-      '<button class="btn small ghost" id="man-add">+ Add entry</button><button class="btn primary small" id="man-save">Save entries</button></div></section>';
+      '<button class="btn small ghost" id="man-add">+ Add entry</button><button class="btn primary small" id="man-save">Save entries</button></div></details>';
     html += '<section class="card"><h2>News &amp; models</h2>' +
       '<div class="form-row"><label for="nw-hn">Hacker News searches</label><input type="text" id="nw-hn" value="' +
         esc(((c.news_watch && c.news_watch.hn_queries) || ["Claude", "Anthropic", "OpenAI Codex", "GPT", "Gemini", "Kimi", "DeepSeek", "OpenRouter"]).join(", ")) + '">' +
@@ -928,7 +931,8 @@
     $("#sub-add").addEventListener("click", function () { $("#subs-table tbody").insertAdjacentHTML("beforeend", subRow()); bindDel(); });
     $("#man-add").addEventListener("click", function () { $("#man-table tbody").insertAdjacentHTML("beforeend", manRow()); bindDel(); });
     $("#subs-save").addEventListener("click", function () { saveSettings({ subscriptions: readRows("#subs-table") }, "Subscriptions saved"); });
-    $("#man-save").addEventListener("click", function () { saveSettings({ manual_entries: readRows("#man-table") }, "Entries saved"); });
+    $("#man-save").addEventListener("click", function () { S.advOpen = true; saveSettings({ manual_entries: readRows("#man-table") }, "Entries saved"); });
+    $(".advanced").addEventListener("toggle", function (e) { S.advOpen = e.target.open; });
     $("#poll-save").addEventListener("click", function () {
       var iv = {}, en = {};
       el.querySelectorAll("[data-iv]").forEach(function (i) { iv[i.getAttribute("data-iv")] = parseInt(i.value, 10); });

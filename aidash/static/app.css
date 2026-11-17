@@ -315,6 +315,12 @@ tfoot td { font-weight: 650; border-bottom: 0; border-top: 1px solid var(--axis)
 .edit-table input, .edit-table select { width: 100%; min-width: 80px; }
 .edit-table td { padding: 4px; }
 .inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+details.advanced > summary { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 12px; flex-wrap: wrap;
+  cursor: pointer; list-style: none; min-height: 32px; }
+details.advanced > summary::-webkit-details-marker { display: none; }
+details.advanced > summary h2::before { content: "▸ "; color: var(--muted); }
+details.advanced[open] > summary h2::before { content: "▾ "; }
+details.advanced[open] > summary { margin-bottom: 10px; }
 
 /* =========================================================================
    Narrow screens: breakdown rows become cards (same DOM, so expanders and
