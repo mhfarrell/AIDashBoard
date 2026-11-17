@@ -41,20 +41,37 @@ cloud service, no proxy: the Pi talks to each provider itself and only serves yo
 * Currency: pick any currency in the top bar. Rates are fetched daily from the ECB (frankfurter.app,
   fallback open.er-api.com) and cached.
 
-## News & models tab
+## Pages
+
+Four pages — **Overview**, **News**, **Models**, **Settings** — as tabs on desktop and an app-style bottom
+bar on phones (mobile-first layout; breakdown rows become cards on narrow screens; tap shows chart values).
+
+**Overview** opens with one **featured headline**, chosen by urgency with a freshness window rather than
+by date: an alert on a model you pinned → a newly seen stealth model → a model in a family you watch
+retiring within 7 days or released in the last 3 → the top story of the last 48 h → the latest news. It
+always says *why* it's featured. Below: the monthly tab, a **model spotlight** row (alert / newest model /
+best value / stealth), the breakdown, headlines, usage windows, trend and platform cards.
+
+**Models** — **tracked models**: search the whole OpenRouter catalogue and pin any model; the price at
+pin time is recorded and you get alerts for price changes, retirement (≤ 30 days), a newer version of it,
+or it disappearing from the catalogue. **Families you watch** are toggles built from the catalogue's real
+model makers.
+
+## News & models data
 
 All from free, keyless sources, refreshed every 3 h (news) / 6 h (model catalogue) to stay light on a Pi 1:
 
 * **Stealth models** live on OpenRouter (unnamed models under test), remembered after they disappear,
   plus Hacker News "stealth model" chatter.
-* **New models** (last 14 days) — ★ marks families you use (Settings → News: model families).
+* **New models** (last 14 days) — ★ marks families you watch (Models → Families you watch).
 * **Best bang for buck** — quality vs price chart with the Pareto frontier, and the best model in each
   price band (Free, < $0.50, < $2, < $6, Premium). Quality = average Design Arena Elo from OpenRouter's
   catalogue (a proxy, not a full benchmark); price = blended $/1M tokens (3 input : 1 output).
 * **Retiring soon** (OpenRouter expiration dates) and **price changes** (day-to-day catalogue diff).
 * **News feed** — release notes for Claude Code, Codex CLI, Gemini CLI, OpenCode and Kimi Code
   (pre-releases hidden), OpenAI and Google AI news, and Hacker News stories (≥ 60 points, term in the
-  title) about your models. Filters: For you / Releases / Vendors / Community / Stealth / All.
+  title) about your models — a Hacker News thread about a vendor post is merged into that post as its
+  "discussion" link. Filters: For you / Releases / Vendors / Community / Stealth / All.
 
 **Sessions:** no provider exposes per-conversation sessions through an API. The "Active usage windows"
 panel shows each running 5-hour window instead (when it started, time elapsed vs quota used).
