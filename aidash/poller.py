@@ -44,9 +44,8 @@ class Poller(object):
         self._next["fx"] = now_ts() + 1
         self.fx_error = None
         if news is not None:
-            self._refresh_public_prices()
-            # News is low priority: start after the providers, then every few hours.
-            self._next["prices"] = now_ts() + self._interval("prices")
+            # Public price pages + news are low priority: start after the providers' first polls.
+            self._next["prices"] = now_ts() + 45
             upd = news.updated or {}
             self._next["news"] = max(now_ts() + 60, (upd.get("feeds") or 0) + self._interval("news"))
             self._next["catalog"] = max(now_ts() + 90, (upd.get("catalog") or 0) + self._interval("catalog"))

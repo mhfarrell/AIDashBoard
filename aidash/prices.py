@@ -61,11 +61,9 @@ def fetch_opencode_plans(url=OPENCODE_URL):
     text = body if isinstance(body, str) else ""
     if not text:
         raise net.UpstreamError("OpenCode pricing page returned no HTML", 200)
-    for pipeline in (_static_pipeline, _embedded_pipeline):
-        plain = pipeline(text)
-        plans = parse_opencode_pricing(plain)
-        if plans:
-            return plans
+    plans = parse_opencode_pricing(_static_pipeline(text)) or _embedded_pipeline(text)
+    if plans:
+        return plans
     raise net.UpstreamError("Couldn't read OpenCode plan prices from the pricing page (its layout may have changed)", 200)
 
 

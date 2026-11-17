@@ -156,13 +156,29 @@ class History(object):
             out.setdefault(platform, {})[kind] = {"value": value, "currency": currency, "first_seen": first_seen}
         return out
 
+    _months_cache = (0, [])
+
     def months_with_data(self):
-        out = set()
-        for (m,) in self._query("SELECT DISTINCT month FROM counters"):
-            out.add(m)
-        for (m,) in self._query("SELECT strftime('%Y-%m', datetime(ts, 'unixepoch', 'localtime')) FROM snapshots"):
-            out.add(m)
-        return [m for m in out if m]
+        """Months with any recorded data. Cheap: counters are tiny, and snapshots are reduced to
+        their MIN/MAX timestamp (indexed) - every month in between is filled in. Cached 10 min."""
+        at, cached = self._months_cache
+        if now_ts() - at < 600:
+            return cached
+        out = set(m for (m,) in self._query("SELECT DISTINCT month FROM counters") if m)
+        lo, hi = self._query("SELECT MIN(ts), MAX(ts) FROM snapshots")[0]
+        if lo and hi:
+            y, mth = [int(x) for x in time.strftime("%Y-%m", time.localtime(lo)).split("-")]
+            end = time.strftime("%Y-%m", time.localtime(hi))
+            while True:
+                key = "%04d-%02d" % (y, mth)
+                out.add(key)
+                if key >= end:
+                    break
+                mth += 1
+                if mth == 13:
+                    y, mth = y + 1, 1
+        self._months_cache = (now_ts(), sorted(out))
+        return self._months_cache[1]
     def kv_get(self, key):
         rows = self._query("SELECT v FROM kv WHERE k=?", (key,))
         if not rows:

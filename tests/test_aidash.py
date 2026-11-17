@@ -7,6 +7,7 @@ import tempfile
 import threading
 import time
 import unittest
+DAY = 86400
 import urllib.error
 import urllib.request
 
@@ -327,6 +328,12 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(sub["start_month"], month_key())
         _, raw, _ = self.get("/api/state")
         self.assertGreaterEqual(json.loads(raw)["costs"]["totals"]["subscriptions"], 90.0)
+        # regression: the news watch list must actually save (a bad edit once nested it under another key)
+        status, s = self.post("/api/settings", {"news_watch": {"families": ["anthropic", "x-ai"], "hn_queries": ["Grok"]}})
+        self.assertEqual(status, 200)
+        self.assertEqual(s["config"]["news_watch"]["families"], ["anthropic", "x-ai"])
+        status, s = self.post("/api/settings", {"tracked_models": [{"id": "openai/gpt-5", "name": "GPT-5", "base_blended": 3.4}]})
+        self.assertEqual(s["config"]["tracked_models"][0]["base_blended"], 3.4)  # pin baselines survive push_to_pi
         status, _ = self.post("/api/settings", {"admin_password": "hunter2"})
         self.assertEqual(status, 200)
         status, _ = self.post("/api/settings", {"display_currency": "USD"})
@@ -341,7 +348,7 @@ class EndToEnd(unittest.TestCase):
         status, body, hdrs = self.get("/")
         self.assertEqual(status, 200)
         self.assertIn(b"AI Usage", body)
-        self.assertEqual(hdrs.get("X-Frame-Options"), "DENY")
+        self.assertEqual(hdrs.get("X-Frame-Options"), "SAMEORIGIN")
         try:
             self.get("/../config.py")
             self.fail("path traversal should 404")
@@ -391,10 +398,10 @@ class NewsTests(unittest.TestCase):
         st = self.state
         self.assertEqual(st["errors"], {})
         titles = [i["title"] for i in st["items"]]
-        self.assertIn("v2.3.0", titles)                                  # stable OpenCode release kept
-        self.assertNotIn("process-daemon v0.6.0", titles)                # sub-package tag dropped
-        self.assertIn("0.171.0-alpha.12 (pre-release)", titles)          # only pre-releases -> newest, labelled
-        self.assertNotIn("0.171.0-alpha.11", titles)
+        self.assertIn("OpenCode v2.3.0", titles)                         # stable release kept, tool-named
+        self.assertFalse(any("process-daemon" in t for t in titles))     # sub-package tag dropped
+        self.assertIn("Codex CLI v0.171.0-alpha.12 (pre-release)", titles)  # only pre-releases -> newest, labelled
+        self.assertFalse(any("alpha.11" in t for t in titles))
         self.assertIn("Claude Fable 5.2 released", titles)
         self.assertNotIn("Malware found in npm package", titles)         # HN: query term must be in the title
         rss = [i for i in st["items"] if i["title"] == "Introducing a new reasoning model"][0]
@@ -433,6 +440,83 @@ class NewsTests(unittest.TestCase):
             self.assertEqual([g["id"] for g in m["stealth_gone"]], ["openrouter/polaris-alpha"])  # remembered
         finally:
             fake_upstream.STATE.pop("catalog", None)
+
+    def test_release_titles_named_and_prerelease_flagged(self):
+        titles = [i["title"] for i in self.state["items"] if i["group"] == "release"]
+        self.assertIn("OpenCode v2.3.0", titles)
+        pre = [i for i in self.state["items"] if i.get("prerelease")]
+        self.assertEqual([i["title"] for i in pre], ["Codex CLI v0.171.0-alpha.12 (pre-release)"])
+
+    def test_featured_and_highlights(self):
+        st = self.state
+        f = st["featured"]
+        # the fixture's cloaked model was first seen just now -> it outranks the 300-point story
+        self.assertEqual((f["kind"], f["title"]), ("stealth", "Stealth model live: polaris-alpha"))
+        self.assertIn("First seen", f["reason"])
+        h = self.news.highlights()
+        self.assertIn("Claude Fable 5.2 released", [x["title"] for x in h["headlines"]])  # story drops to headlines
+        self.assertNotIn(f["url"], [x["url"] for x in h["headlines"] if x["url"] != "#/models"])
+        self.assertFalse(any("pre-release" in x["title"] for x in h["headlines"]))    # no pre-releases on Overview
+        self.assertLessEqual(sum(1 for x in h["headlines"] if x["group"] == "release"), 1)
+        self.assertEqual(h["spotlight"]["best_value"]["id"], "deepseek/deepseek-v4.1-flash")
+        self.assertEqual(h["spotlight"]["new_model"]["id"], "anthropic/claude-fable-5.2")
+
+    def test_featured_ranking_by_urgency(self):
+        from aidash.news import pick_featured
+        now = fake_upstream.NOW
+        story = [{"title": "Big story", "url": "u", "ts": now - 3600, "group": "community", "relevant": True,
+                  "points": 900, "source": "Hacker News"}]
+        models = {"retiring": [{"name": "GLM 5.1", "exp": "2026-11-20", "exp_ts": now + 2 * DAY, "watched": True}],
+                  "stealth": [], "new": [], "price_changes": []}
+        self.assertEqual(pick_featured(story, models, [], now)["kind"], "retiring")   # urgent beats popular
+        models["stealth"] = [{"id": "openrouter/x", "name": "Polaris", "first_seen": now - DAY}]
+        self.assertEqual(pick_featured(story, models, [], now)["kind"], "stealth")
+        stale_price = [{"kind": "price", "severity": 2, "id": "a/b", "title": "B price down 10%", "detail": "", "ts": now}]
+        self.assertEqual(pick_featured(story, models, stale_price, now)["kind"], "stealth")  # old price change: not headline
+        models["price_changes"] = [{"id": "a/b", "ts": now - DAY}]
+        self.assertEqual(pick_featured(story, models, stale_price, now)["kind"], "alert")   # fresh change: headline
+        self.assertEqual(pick_featured([], {}, [], now)["kind"], "none")
+
+    def test_collapse_discussions(self):
+        from aidash.news import collapse_discussions
+        items = [{"title": "Introducing GPT-6.2 Astra and Sol", "url": "https://openai.com/x", "source_id": "openai-news", "group": "vendor"},
+                 {"title": "GPT-6.2 Astra and Sol", "url": "https://openai.com/x2", "source_id": "hn", "group": "community",
+                  "discuss": "https://news.ycombinator.com/item?id=9", "points": 400},
+                 {"title": "Claude", "url": "https://e.com", "source_id": "hn", "group": "community"}]
+        out = collapse_discussions(items)
+        self.assertEqual(len(out), 2)  # the HN copy merged; the 1-word title did NOT merge into anything
+        self.assertEqual(out[0]["discuss"], "https://news.ycombinator.com/item?id=9")
+        self.assertEqual(out[0]["points"], 400)
+
+    def test_tracked_models_alerts(self):
+        from aidash.news import analyse_tracked, compact_catalog
+        now = fake_upstream.NOW
+        cat = compact_catalog(fake_upstream.CATALOG + [fake_upstream._m("deepseek/deepseek-v4.1-flash-1201", 0.08, 0.36, (1280, 1290), created_days_ago=1)])
+        tracked = [{"id": "deepseek/deepseek-v4.1-flash", "base_blended": 0.36},       # price was higher -> down
+                   {"id": "openai/gpt-5", "base_blended": cat["openai/gpt-5"]["blended"]},  # retiring in 20 days
+                   {"id": "gone/model", "name": "Gone", "base_blended": 1.0}]
+        rows, alerts = analyse_tracked(tracked, cat, now)
+        by = dict((r["id"], r) for r in rows)
+        self.assertEqual(by["gone/model"]["status"], "missing")
+        self.assertLess(by["deepseek/deepseek-v4.1-flash"]["change_pct"], 0)
+        self.assertEqual(by["deepseek/deepseek-v4.1-flash"]["newer"], "deepseek/deepseek-v4.1-flash-1201")
+        self.assertEqual(by["openai/gpt-5"]["retire_days"], 19)
+        kinds = [a["kind"] for a in alerts]
+        self.assertEqual(kinds[0], "missing")  # most severe first
+        self.assertTrue({"price", "retiring", "new_version"} <= set(kinds))
+
+    def test_track_untrack_and_index(self):
+        self.news.track("openai/gpt-5")
+        t = self.news.tracked_config()
+        self.assertEqual(t[-1]["id"], "openai/gpt-5")
+        self.assertIsNotNone(t[-1]["base_in"])
+        idx = self.news.model_index()
+        self.assertIn(["openai", 1], idx["authors"])  # ':batch' duplicates are excluded from the catalogue
+        self.assertTrue(any(m["id"] == "openai/gpt-5" for m in idx["models"]))
+        with self.assertRaises(ValueError):
+            self.news.track("nope/missing")
+        self.news.untrack("openai/gpt-5")
+        self.assertEqual(self.news.tracked_config(), [])
 
     def test_state_survives_restart(self):
         from aidash.news import News

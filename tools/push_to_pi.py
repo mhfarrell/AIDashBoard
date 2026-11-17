@@ -17,7 +17,8 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CONFIG_KEYS = ("display_currency", "subscriptions", "manual_entries", "intervals", "enabled",
-               "moonshot_base_url", "antigravity_client_id", "antigravity_client_secret")
+               "moonshot_base_url", "antigravity_client_id", "antigravity_client_secret",
+               "news_watch", "tracked_models")
 SECRET_KEYS = ("openrouter_api_key", "opencode_api_key", "moonshot_api_key", "kimi_code_api_key", "gemini_api_key")
 
 

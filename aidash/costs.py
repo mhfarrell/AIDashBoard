@@ -94,8 +94,9 @@ def compute(month, cfg, state, counters, fx):
                 lp = list_price(p, detected["plan"], cur, price_map)
                 if lp:
                     amt, s_cur = lp
-                    label = "%s %s (list price, auto-detected - set your own in Settings)" % (
-                        PLATFORM_NAMES.get(p, p).split(" /")[0], detected["plan"])
+                    brand = PLATFORM_NAMES.get(p, p).split(" /")[0]
+                    name = detected["plan"] if detected["plan"].lower().startswith(brand.lower()) else "%s %s" % (brand, detected["plan"])
+                    label = "%s (list price, auto-detected - set your own in Settings)" % name
             if amt <= 0:
                 continue
             c = conv(amt, s_cur)

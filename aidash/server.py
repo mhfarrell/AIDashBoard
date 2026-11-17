@@ -101,8 +101,7 @@ class App(object):
             })
         active.sort(key=lambda a: a["resets_at"])
         # Month picker: every month we have anything for (config, invoices, tracked spend, history).
-        known = set((self.store.get("known_months") or {}).get("all") or [])
-        known.add(cur_month)
+        known = {cur_month}
         for e in cfg.get("manual_entries") or []:
             if e.get("month"):
                 known.add(e["month"])
@@ -125,6 +124,7 @@ class App(object):
             "trend": trend,
             "platforms": platforms,
             "active_windows": active,
+            "highlights": self.news.highlights() if self.news is not None else None,
         }
 
     # ------------------------------------------------------------------ settings
@@ -215,12 +215,7 @@ class App(object):
                 if k == "antigravity_client_secret" and not v:
                     continue  # blank = keep existing
                 changes[k] = v
-        if isinstance(body.get("known_months"), dict):
-            km = {}
-            for k, v in body["known_months"].items():
-                if isinstance(v, list):
-                    km[str(k)[:32]] = [str(m) for m in v if isinstance(m, str) and MONTH_RE.match(m)][:120]
-            changes["known_months"] = km
+        if isinstance(body.get("news_watch"), dict):
             nw = body["news_watch"]
             clean = {}
             for k in ("families", "hn_queries"):
@@ -229,6 +224,15 @@ class App(object):
             if num(nw.get("hn_min_points")) is not None:
                 clean["hn_min_points"] = int(max(1, num(nw["hn_min_points"])))
             changes["news_watch"] = clean
+        if isinstance(body.get("tracked_models"), list):  # e.g. from push_to_pi: keep pin-time baselines
+            keep = []
+            for t in body["tracked_models"][:40]:
+                if isinstance(t, dict) and isinstance(t.get("id"), str) and re.match(r"^[\w.:/-]{3,120}$", t["id"]):
+                    keep.append({"id": t["id"], "name": str(t.get("name") or t["id"])[:120],
+                                 "added_ts": num(t.get("added_ts"), now_ts()),
+                                 "base_in": num(t.get("base_in")), "base_out": num(t.get("base_out")),
+                                 "base_blended": num(t.get("base_blended"))})
+            changes["tracked_models"] = keep
         if changes:
             self.store.update_config(changes)
         if "news_watch" in changes and self.news is not None:
@@ -267,7 +271,7 @@ def make_handler(app):
             # JSON never cached; page files revalidated on every load so updates show up immediately.
             self.send_header("Cache-Control", "no-store" if ctype == "application/json" else "no-cache")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("X-Frame-Options", "DENY")
+            self.send_header("X-Frame-Options", "SAMEORIGIN")
             self.send_header("Referrer-Policy", "no-referrer")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
@@ -312,6 +316,10 @@ def make_handler(app):
                     if app.news is None:
                         return self._send(404, {"error": "news disabled"})
                     return self._send(200, app.news.state())
+                if path == "/api/models/index":
+                    if app.news is None:
+                        return self._send(404, {"error": "news disabled"})
+                    return self._send(200, app.news.model_index())
                 if path == "/api/oauth/codex/device":
                     return self._send(200, app.oauth.codex_device_status())
                 if path == "/healthz":
@@ -358,6 +366,13 @@ def make_handler(app):
                     return self._send(200, app.apply_settings(body))
                 if path == "/api/admin/check":
                     return self._send(200, {"ok": True})
+                if path in ("/api/models/track", "/api/models/untrack") and app.news is not None:
+                    mid = str(body.get("id") or "")
+                    if path.endswith("/track"):
+                        app.news.track(mid)
+                    else:
+                        app.news.untrack(mid)
+                    return self._send(200, {"tracked": [t["id"] for t in app.news.tracked_config()]})
                 m = re.match(r"^/api/oauth/(claude|codex|antigravity)/(start|finish|logout)$", path)
                 if m:
                     return self._oauth(m.group(1), m.group(2), body)
