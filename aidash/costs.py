@@ -55,6 +55,49 @@ def list_price(platform, plan, display_currency, price_map=None):
     return float(prices[cur]), cur
 
 
+def window_category(w):
+    """Map a provider quota window to the three comparison columns: 5h, weekly, special.
+
+    Generic weekly allowances (all models) are weekly; model-scoped/family buckets, additional
+    Codex limits, monthly allowances and unclassified model quotas belong in special instead.
+    Returns None for lifetime balances/credit totals that aren't a rolling usage window.
+    """
+    if w.get("key") in LIFETIME_WINDOWS or w.get("used_pct") is None:
+        return None
+    key = str(w.get("key") or "").lower()
+    label = str(w.get("label") or "").strip()
+    low = label.lower()
+    if key == "session" or "5-hour" in low or low.startswith("5h"):
+        if "models" in low or key.startswith(("spark_", "model_")):
+            return "special"
+        return "5h"
+    if key == "weekly" or low in ("weekly", "weekly (all models)", "7-day"):
+        return "weekly"
+    return "special"
+
+
+def special_label(w):
+    """Short model/period name for the Special column (e.g. 'Weekly Fable' -> 'Fable')."""
+    label = str(w.get("label") or w.get("key") or "Other")
+    label = label.replace(" · Weekly", "").replace(" · weekly", "")
+    if label.lower().startswith("weekly "):
+        label = label[7:]
+    return label.strip() or "Other"
+
+
+def usage_columns(windows):
+    """{'5h': {...}|None, 'weekly': {...}|None, 'special': {...}|None}; worst per column."""
+    out = {"5h": None, "weekly": None, "special": None}
+    for w in windows or []:
+        cat = window_category(w)
+        if not cat:
+            continue
+        item = {"pct": w["used_pct"], "label": special_label(w) if cat == "special" else w.get("label")}
+        if out[cat] is None or item["pct"] > out[cat]["pct"]:
+            out[cat] = item
+    return out
+
+
 def _fmt_date(ts):
     return time.strftime("%d %b", time.localtime(ts))
 
@@ -183,12 +226,14 @@ def compute(month, cfg, state, counters, fx):
         for b in data.get("balances") or []:
             if b.get("key") in ("credits", "available") and b.get("currency"):
                 balance = conv(b.get("amount"), b["currency"])
+        windows = data.get("windows") or []
+        # The tightest GENERIC window is used for summaries, not model-scoped specials.
+        cols = usage_columns(windows)
         worst = None
-        for w in data.get("windows") or []:
-            if w.get("used_pct") is None or w.get("key") in LIFETIME_WINDOWS:
-                continue
-            if worst is None or w["used_pct"] > worst["used_pct"]:
-                worst = w
+        for cat in ("5h", "weekly"):
+            item = cols[cat]
+            if item and (worst is None or item["pct"] > worst["used_pct"]):
+                worst = {"used_pct": item["pct"], "label": item["label"]}
 
         total = subs + spend
         if total == 0 and topups == 0 and balance is None and not data and p not in known:
@@ -203,6 +248,7 @@ def compute(month, cfg, state, counters, fx):
             "balance_left": balance,
             "usage_pct": worst["used_pct"] if worst else None,
             "usage_label": worst["label"] if worst else None,
+            "usage_columns": cols,
             "items": items,
         })
 

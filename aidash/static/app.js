@@ -255,9 +255,12 @@
     var tb = $("#bd-table tbody");
     tb.innerHTML = rows.map(function (r) {
       var open = !!S.open[r.platform];
-      var usage = r.usage_pct == null ? dash
-        : '<span class="mini-meter" aria-hidden="true"><i style="width:' + Math.min(100, r.usage_pct) + '%"></i></span>' + pct(r.usage_pct) +
-          ' <span class="muted small">' + esc(r.usage_label || "") + "</span>";
+      var usageCell = function (cat) {
+        var u = r.usage_columns && r.usage_columns[cat];
+        if (!u) return dash;
+        var text = pct(u.pct) + (cat === "special" ? ' <span class="muted small">' + esc(u.label || "") + "</span>" : "");
+        return '<span class="mini-meter" aria-hidden="true"><i style="width:' + Math.min(100, u.pct) + '%"></i></span>' + text;
+      };
       var share = grand ? (100 * rowTotal(r) / grand).toFixed(1) + "%" : "—";
       var html = '<tr class="expander" tabindex="0" data-p="' + esc(r.platform) + '" aria-expanded="' + open + '">' +
         '<td class="c-name"><span class="chev">' + (r.items.length ? (open ? "▾" : "▸") : "") + '</span><span class="swatch" style="background:' + color(r.platform) + '"></span>' + esc(r.name) + "</td>" +
@@ -267,9 +270,11 @@
         '<td class="num c-hide-sm" data-label="Share">' + share + "</td>" +
         '<td class="num' + (r.topups ? "" : " c-hide-sm") + '" data-label="Bought">' + (r.topups ? money(r.topups) : dash) + "</td>" +
         '<td class="num' + (r.balance_left != null ? "" : " c-hide-sm") + '" data-label="Credit left">' + (r.balance_left != null ? money(r.balance_left) : dash) + "</td>" +
-        '<td class="c-usage' + (r.usage_pct == null ? " c-hide-sm" : "") + '" data-label="Usage now">' + usage + "</td></tr>";
+        '<td class="c-usage5h" data-label="5h">' + usageCell("5h") + "</td>" +
+        '<td class="c-usageweekly" data-label="Weekly">' + usageCell("weekly") + "</td>" +
+        '<td class="c-usage' + (!r.usage_columns || !r.usage_columns.special ? " c-hide-sm" : "") + '" data-label="Special">' + usageCell("special") + "</td></tr>";
       if (open && r.items.length) {
-        html += '<tr class="detail"><td colspan="8"><ul class="detail-list">' + r.items.map(function (it) {
+        html += '<tr class="detail"><td colspan="10"><ul class="detail-list">' + r.items.map(function (it) {
           var kind = it.kind === "topup" ? "bought" : (it.kind === "info" ? "replaced" : it.kind);
           return "<li><span>" + esc(it.label) + ' <span class="muted">(' + esc(kind) + (it.original ? ", " + esc(it.original) : "") +
             ')</span></span><span class="num">' + money(it.amount) + "</span></li>";
@@ -290,7 +295,7 @@
     $("#bd-table tfoot").innerHTML = '<tr><td class="c-name">All platforms</td>' +
       '<td class="num" data-label="Subscriptions">' + money(t.subscriptions) + '</td><td class="num" data-label="Credit spend">' + money(t.credit_spend) + "</td>" +
       '<td class="num" data-label="Total">' + money(S.credits === "bought" ? t.total_cashflow : t.total) + '</td><td class="num c-hide-sm" data-label="Share">100%</td>' +
-      '<td class="num" data-label="Bought">' + money(t.topups) + '</td><td class="num c-hide-sm" data-label="Credit left">' + $("#t-balance").textContent + '</td><td class="c-usage" data-label="Usage">' + usageSummary + "</td></tr>";
+      '<td class="num" data-label="Bought">' + money(t.topups) + '</td><td class="num c-hide-sm" data-label="Credit left">' + $("#t-balance").textContent + '</td><td colspan="3" class="c-usage" data-label="Usage (tightest generic)">' + usageSummary + "</td></tr>";
     tb.querySelectorAll("tr.expander").forEach(function (tr) {
       var toggle = function () { var p = tr.getAttribute("data-p"); S.open[p] = !S.open[p]; renderBreakdown(S.state); };
       tr.addEventListener("click", toggle);

@@ -110,6 +110,24 @@ class FakeFX(object):
 
 
 class CostTests(unittest.TestCase):
+    def test_usage_columns_separate_generic_and_special(self):
+        windows = [{"key": "session", "label": "5-hour session", "used_pct": 43},
+                   {"key": "weekly", "label": "Weekly (all models)", "used_pct": 22},
+                   {"key": "weekly_fable", "label": "Weekly Fable", "used_pct": 34},
+                   {"key": "weekly_opus", "label": "Weekly Opus", "used_pct": 8},
+                   {"key": "monthly", "label": "Monthly ($60)", "used_pct": 59},
+                   {"key": "credits", "label": "Credits used (lifetime)", "used_pct": 53}]
+        cols = costs.usage_columns(windows)
+        self.assertEqual(cols["5h"]["pct"], 43)
+        self.assertEqual(cols["weekly"]["pct"], 22)
+        self.assertEqual((cols["special"]["pct"], cols["special"]["label"]), (59, "Monthly ($60)"))
+        self.assertEqual(costs.window_category(windows[2]), "special")
+        self.assertEqual(costs.special_label(windows[2]), "Fable")
+        # generic worst ignores special (Fable > overall weekly)
+        cfg = {"display_currency": "USD", "subscriptions": []}
+        row = [r for r in costs.compute(month_key(), cfg, {"claude": {"data": {"windows": windows}}}, {}, FakeFX())["rows"] if r["platform"] == "claude"][0]
+        self.assertEqual(row["usage_pct"], 43)
+
     def test_total_is_subs_plus_spend_not_topups(self):
         m = month_key()
         cfg = {"display_currency": "GBP",
