@@ -251,7 +251,8 @@
     var usageSummary = tight
       ? '<span class="mini-meter" aria-hidden="true"><i style="width:' + Math.min(100, tight.usage_pct) + '%"></i></span>Tightest ' + pct(tight.usage_pct) +
         ' <span class="muted small">' + esc(tight.name) + " · " + esc(tight.usage_label || "") + "</span><br>" +
-        '<span class="small">' + (hot ? '<span class="warnline">⚠ ' + hot + " of " + withUse.length + " platforms ≥ 80%</span>" : withUse.length + " platforms all below 80%") + "</span>"
+        '<span class="small">' + (hot ? '<span class="warnline">⚠ ' + hot + " of " + withUse.length + " platform" + (withUse.length > 1 ? "s" : "") + " ≥ 80%</span>"
+          : (withUse.length > 1 ? "all " + withUse.length + " platforms below 80%" : "below 80%")) + "</span>"
       : '<span class="muted">—</span>';
     $("#bd-table tfoot").innerHTML = "<tr><td>All platforms</td>" +
       '<td class="num">' + money(t.subscriptions) + '</td><td class="num">' + money(t.credit_spend) + "</td>" +
@@ -671,6 +672,36 @@
       .then(function () { v.classList.remove("loading"); });
   }
 
+  // Compact summary on the main dashboard (full detail lives on #/news).
+  function loadNewsSummary() {
+    return api("/api/news").then(function (d) { N.data = d; renderNewsSummary(); }).catch(function () {
+      $("#ns-feed").innerHTML = '<div class="empty-note">News unavailable right now.</div>';
+    });
+  }
+  function renderNewsSummary() {
+    var d = N.data;
+    if (!d) return;
+    var m = d.models || {};
+    var items = d.items.filter(function (i) { return i.relevant && i.group !== "stealth"; }).slice(0, 5);
+    $("#ns-feed").innerHTML = items.length ? '<ul class="mlist">' + items.map(function (i) {
+      return '<li><a href="' + esc(i.url) + '" target="_blank" rel="noopener noreferrer">' + esc(i.title) + '</a><span class="meta">' +
+        esc(i.source.replace(/ releases$/, "")) + " · " + day(i.ts) + "</span></li>";
+    }).join("") + "</ul>" : '<div class="empty-note">The first news fetch runs a minute after start-up…</div>';
+    var lines = [];
+    var st = m.stealth || [];
+    lines.push("<li><span>Stealth models live</span><span class=\"meta\">" + (st.length ? '<b>' + st.length + "</b> — " + esc(st.map(function (s) { return s.name; }).join(", ")) : "none right now") + "</span></li>");
+    (m.new || []).filter(function (x) { return x.watched; }).slice(0, 3).forEach(function (x) {
+      lines.push("<li><span>★ New: " + esc(x.name) + '</span><span class="meta">' + day(x.created) + " · " + usd(x.blended) + "/M</span></li>");
+    });
+    (m.retiring || []).filter(function (x) { return x.watched && x.exp_ts - Date.now() / 1000 < 21 * 86400; }).slice(0, 2).forEach(function (x) {
+      var days = Math.max(0, Math.round((x.exp_ts - Date.now() / 1000) / 86400));
+      lines.push("<li><span>Retiring: " + esc(x.name) + '</span><span class="meta">' + (days <= 7 ? '<span class="warnline">⚠ ' + days + " days</span>" : days + " days") + "</span></li>");
+    });
+    var best = ((m.value_tiers || []).filter(function (t) { return t.label === "Under $0.50 / M"; })[0] || {}).models;
+    if (best && best[0]) lines.push("<li><span>Best value under $0.50/M</span><span class=\"meta\">" + esc(best[0].name) + " · " + usd(best[0].blended) + "</span></li>");
+    $("#ns-models").innerHTML = m.catalog_size ? '<ul class="mlist">' + lines.join("") + "</ul>" : '<div class="empty-note">Waiting for the first model catalogue fetch…</div>';
+  }
+
   function renderNews() {
     var d = N.data, m = d.models || {};
     var up = Math.max(d.updated.feeds || 0, d.updated.catalog || 0);
@@ -827,13 +858,18 @@
     $(".filters").hidden = view !== "dash";
     if (view === "settings") loadSettings();
     if (view === "news") loadNews();
+    if (view === "dash") loadNewsSummary();
     hideTip();
   }
 
   S.credits = load("credits", "used");
   N.filter = load("newsFilter", "you");
   $("#bb-toggle").addEventListener("click", function () { N.valueTable = !N.valueTable; if (N.data) renderValue(N.data.models || {}); });
-  setInterval(function () { if (!document.hidden && location.hash === "#/news") loadNews(); }, 5 * 60000);
+  setInterval(function () {
+    if (document.hidden) return;
+    if (location.hash === "#/news") loadNews();
+    else if (location.hash === "" || location.hash === "#/") loadNewsSummary();
+  }, 5 * 60000);
   $("#f-month").addEventListener("change", function (e) { S.month = e.target.value; refresh(); });
   $("#f-currency").addEventListener("change", function (e) {
     api("/api/currency", { currency: e.target.value }).then(refresh).catch(function (err) { toast(err.message); });
