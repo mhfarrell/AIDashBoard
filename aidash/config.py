@@ -41,6 +41,7 @@ DEFAULT_CONFIG = {
         "fx": 21600,
         "news": 10800,
         "catalog": 21600,
+        "prices": 43200,
     },
     "enabled": {
         "claude": True,

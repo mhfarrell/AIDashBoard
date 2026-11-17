@@ -68,6 +68,7 @@ class App(object):
             "subscriptions": self.store.get("subscriptions"),
             "manual_entries": self.store.get("manual_entries"),
             "detected_plans": self.store.get("detected_plans"),
+            "price_data": self.store.get("price_data"),
         }
         tab = costs.compute(month, cfg, snap, self.history.counters(month), self.fx)
         trend = costs.history(prev_months(6), cfg, self.history.counters, self.fx, snap)
@@ -99,6 +100,17 @@ class App(object):
                 "sparks": sparks.get(pid) or {},
             })
         active.sort(key=lambda a: a["resets_at"])
+        # Month picker: every month we have anything for (config, invoices, tracked spend, history).
+        known = set((self.store.get("known_months") or {}).get("all") or [])
+        known.add(cur_month)
+        for e in cfg.get("manual_entries") or []:
+            if e.get("month"):
+                known.add(e["month"])
+        for s in cfg.get("subscriptions") or []:
+            if s.get("start_month"):
+                known.add(s["start_month"])
+        known.update(self.history.months_with_data())
+        months = sorted(known, reverse=True)
         return {
             "version": __version__,
             "now": now,
@@ -108,7 +120,7 @@ class App(object):
             "fx_rates": dict((c, self.fx.convert(1, "USD", c)) for c in ("USD", "GBP", "EUR", "CNY")),
             "month": month,
             "current_month": cur_month,
-            "months": list(reversed(prev_months(12))),
+            "months": months,
             "costs": tab,
             "trend": trend,
             "platforms": platforms,
@@ -203,7 +215,12 @@ class App(object):
                 if k == "antigravity_client_secret" and not v:
                     continue  # blank = keep existing
                 changes[k] = v
-        if isinstance(body.get("news_watch"), dict):
+        if isinstance(body.get("known_months"), dict):
+            km = {}
+            for k, v in body["known_months"].items():
+                if isinstance(v, list):
+                    km[str(k)[:32]] = [str(m) for m in v if isinstance(m, str) and MONTH_RE.match(m)][:120]
+            changes["known_months"] = km
             nw = body["news_watch"]
             clean = {}
             for k in ("families", "hn_queries"):

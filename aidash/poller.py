@@ -44,7 +44,9 @@ class Poller(object):
         self._next["fx"] = now_ts() + 1
         self.fx_error = None
         if news is not None:
+            self._refresh_public_prices()
             # News is low priority: start after the providers, then every few hours.
+            self._next["prices"] = now_ts() + self._interval("prices")
             upd = news.updated or {}
             self._next["news"] = max(now_ts() + 60, (upd.get("feeds") or 0) + self._interval("news"))
             self._next["catalog"] = max(now_ts() + 90, (upd.get("catalog") or 0) + self._interval("catalog"))
@@ -97,6 +99,10 @@ class Poller(object):
                     elif key == "catalog":
                         self._schedule(key, self._interval("catalog"))
                         self.news.refresh_catalog()
+                        self._refresh_public_prices()
+                    elif key == "prices":
+                        self._schedule(key, self._interval("prices"))
+                        self._refresh_public_prices()
                     else:
                         self._poll(key)
                 except Exception:  # never let one provider kill the loop
@@ -203,9 +209,16 @@ class Poller(object):
             self.history.track_cumulative(pid, "balance", m.get("balance"), "topup",
                                           m.get("balance_currency") or "USD", kind_down="spend")
 
+    def _refresh_public_prices(self):
+        try:
+            from . import prices
+            prices.track(self.store, self.history)
+        except Exception:
+            traceback.print_exc()
+
     def _remember_plan(self, pid, plan):
         """Persist the detected subscription plan (used for auto list prices). Writes only on change."""
-        if pid not in ("claude", "codex") or not plan:
+        if pid not in ("claude", "codex", "opencode") or not plan:
             return
         plans = self.store.get("detected_plans") or {}
         cur = plans.get(pid) or {}

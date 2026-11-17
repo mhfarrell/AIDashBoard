@@ -29,8 +29,25 @@ LIST_PRICES = {
 }
 
 
-def list_price(platform, plan, display_currency):
-    """(amount, currency) for a detected plan, or None when we don't know its price."""
+def list_price_from_map(platform, plan, price_map):
+    """Public price map {"Go": 10.0, "Go Plus": 40.0} -> (amount, "USD"), matched by plan name."""
+    if not price_map:
+        return None
+    plan = (plan or "").strip().lower()
+    aliases = {"opencode": {"go": "go", "go plus": "go plus", "opencode go": "go", "opencode go plus": "go plus"}}
+    plan = (aliases.get(platform) or {}).get(plan, plan)
+    for name, value in price_map.items():
+        if name.strip().lower() == plan and float(value) > 0:
+            return float(value), "USD"
+    return None
+
+
+def list_price(platform, plan, display_currency, price_map=None):
+    """(amount, currency) for a detected plan, or None when its price isn't published anywhere."""
+    if price_map:
+        public = list_price_from_map(platform, plan, price_map)
+        if public:
+            return public
     prices = (LIST_PRICES.get(platform) or {}).get((plan or "").strip().lower())
     if not prices:
         return None
@@ -53,6 +70,7 @@ def compute(month, cfg, state, counters, fx):
         return round(v, 2) if v is not None else None
 
     rows = []
+    price_map = ((cfg.get("price_data") or {}).get("opencode") or {}).get("plans")
     known = [p[0] for p in PLATFORMS]
     platforms = list(known)
     for e in cfg.get("manual_entries") or []:
@@ -73,7 +91,7 @@ def compute(month, cfg, state, counters, fx):
             label = s.get("name") or "Subscription"
             if amt <= 0 and s.get("auto_price", True) and detected.get("plan") \
                     and month >= (detected.get("since") or "0000-00"):
-                lp = list_price(p, detected["plan"], cur)
+                lp = list_price(p, detected["plan"], cur, price_map)
                 if lp:
                     amt, s_cur = lp
                     label = "%s %s (list price, auto-detected - set your own in Settings)" % (

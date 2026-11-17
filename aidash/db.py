@@ -156,7 +156,13 @@ class History(object):
             out.setdefault(platform, {})[kind] = {"value": value, "currency": currency, "first_seen": first_seen}
         return out
 
-    # ------------------------------------------------------------- small JSON blobs (news cache etc.)
+    def months_with_data(self):
+        out = set()
+        for (m,) in self._query("SELECT DISTINCT month FROM counters"):
+            out.add(m)
+        for (m,) in self._query("SELECT strftime('%Y-%m', datetime(ts, 'unixepoch', 'localtime')) FROM snapshots"):
+            out.add(m)
+        return [m for m in out if m]
     def kv_get(self, key):
         rows = self._query("SELECT v FROM kv WHERE k=?", (key,))
         if not rows:

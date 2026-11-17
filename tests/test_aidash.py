@@ -154,6 +154,20 @@ class CostTests(unittest.TestCase):
         self.assertEqual(len(replaced), 2)  # list price + API figure shown as "not counted"
         self.assertTrue(all(i["amount"] is None for i in replaced))
 
+    def test_opencode_public_price(self):
+        from aidash import prices
+        self.assertEqual(prices.parse_opencode_pricing("Go $10 per month ... Go Plus $40 per month"), {"Go": 10.0, "Go Plus": 40.0})
+        self.assertIsNone(prices.parse_opencode_pricing("Go $10 per month only"))  # Go Plus missing -> treat as page changed
+        self.assertEqual(costs.list_price("opencode", "OpenCode Go", "GBP", {"Go": 10.0, "Go Plus": 40.0}), (10.0, "USD"))
+        self.assertEqual(costs.list_price("opencode", "OpenCode Go Plus", "GBP", {"Go": 10.0, "Go Plus": 40.0}), (40.0, "USD"))
+        m = month_key()
+        cfg = {"display_currency": "GBP",
+               "subscriptions": [{"platform": "opencode", "name": "OpenCode Go", "amount": 0, "currency": "USD", "active": True}],
+               "detected_plans": {"opencode": {"plan": "OpenCode Go", "since": m}},
+               "price_data": {"opencode": {"plans": {"Go": 10.0, "Go Plus": 40.0}}}}
+        row = [r for r in costs.compute(m, cfg, {}, {}, FakeFX())["rows"] if r["platform"] == "opencode"][0]
+        self.assertEqual(row["subscription"], 8.0)  # $10 -> GBP at 0.8
+
     def test_auto_list_price_from_detected_plan(self):
         m = month_key()
         cfg = {"display_currency": "GBP",

@@ -422,7 +422,10 @@ def fetch_opencode(ctx):
     windows = parse_opencode(data)
     if not windows:
         raise net.UpstreamError("OpenCode usage response had no windows", 200, str(data)[:200])
-    return _result(plan="OpenCode Go", windows=windows)
+    # The usage endpoint reports no plan name or price (only windows), so base Go is assumed.
+    # Go Plus users: type your amount in Settings (it always overrides the list price).
+    plan = "OpenCode Go Plus" if "plus" in str(data.get("plan") or data.get("planName") or "").lower() else "OpenCode Go"
+    return _result(plan=plan, windows=windows)
 
 
 # ============================================================================ OpenRouter

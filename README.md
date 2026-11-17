@@ -28,7 +28,11 @@ cloud service, no proxy: the Pi talks to each provider itself and only serves yo
   when that's larger.
 * Subscriptions count every month from their *start month*; unticking *active* ends them after the
   current month, so past months stay correct. Leave the amount empty to use the list price of the plan
-  detected from your login (Claude Pro/Max, ChatGPT Plus/Pro).
+  detected from your login (Claude Pro/Max, ChatGPT Plus/Pro) or the provider's public pricing page
+  (OpenCode Go/Go Plus — read from opencode.ai/console/go every 12 h, no key needed).
+* **History**: provider usage APIs only expose the *current* windows/balances — none publish usage
+  history. The dashboard builds its own history from first run (snapshots every 15 min; spend counters
+  per month). For the past, set subscription start months and add invoices under Manual entries.
 * **Invoices beat estimates.** Settings → *Invoices & manual entries*: entries for a platform + month
   replace the automatic figure for that column (subscription / spend / bought), and the replaced figure
   stays visible as "not counted". Types: *subscription charge*, *spend*, *bought*, and *bought & used*
