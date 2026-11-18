@@ -366,6 +366,11 @@ def make_handler(app):
                     return self._send(200, app.apply_settings(body))
                 if path == "/api/admin/check":
                     return self._send(200, {"ok": True})
+                if path == "/api/history/counters":  # from push_to_pi: another install's spend counters
+                    rows = body.get("counters")
+                    if not isinstance(rows, list):
+                        return self._send(400, {"error": "counters must be a list"})
+                    return self._send(200, {"merged": app.history.merge_counters(rows[:2000])})
                 if path in ("/api/models/track", "/api/models/untrack") and app.news is not None:
                     mid = str(body.get("id") or "")
                     if path.endswith("/track"):

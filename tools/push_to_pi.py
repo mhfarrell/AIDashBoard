@@ -12,6 +12,7 @@ NOT copied: Claude / ChatGPT / Antigravity LOGINS. Those providers rotate tokens
 import argparse
 import json
 import os
+import sqlite3
 import urllib.error
 import urllib.request
 
@@ -51,9 +52,30 @@ def main():
         raise SystemExit("Pi refused (%s): %s" % (e.code, e.read()[:200].decode("utf-8", "replace")))
     except urllib.error.URLError as e:
         raise SystemExit("Can't reach %s (%s). Is the Pi on, and does %s resolve? Try its IP." % (a.to, e.reason, a.to))
+    # Spend/top-up counters this install has tracked (e.g. OpenRouter, Moonshot balance drops), so the
+    # Pi's monthly tab includes spend from before it was running. The Pi keeps the larger of each total.
+    merged = None
+    hist = os.path.join(a.src, "history.sqlite")
+    if os.path.isfile(hist):
+        con = sqlite3.connect("file:%s?mode=ro" % hist.replace("\\", "/"), uri=True)
+        rows = [{"platform": p, "month": m, "kind": k, "currency": c, "value": v, "first_seen": f}
+                for p, m, k, c, v, f in con.execute(
+                    "SELECT platform, month, kind, currency, value, first_seen FROM counters WHERE value > 0")]
+        con.close()
+        if rows:
+            req = urllib.request.Request(a.to.rstrip("/") + "/api/history/counters", method="POST",
+                                         data=json.dumps({"counters": rows}).encode(),
+                                         headers={"Content-Type": "application/json", "X-Admin-Password": a.admin_password})
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    merged = (json.loads(r.read() or b"{}").get("merged"), len(rows))
+            except urllib.error.HTTPError as e:
+                print("  (spend history not copied: Pi returned %s - update the Pi's dashboard first)" % e.code)
     print("Pushed to %s:" % a.to)
     print("  settings: %s" % ", ".join(k for k in CONFIG_KEYS if k in body))
     print("  API keys: %s" % (", ".join(sorted(body["secrets"])) or "none"))
+    if merged:
+        print("  spend history: %d of %d counters updated on the Pi" % merged)
     print("Now open %s/#/settings and connect Claude, ChatGPT and Antigravity on the Pi." % a.to.rstrip("/"))
 
 

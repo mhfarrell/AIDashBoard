@@ -604,6 +604,24 @@ class LoginFlows(unittest.TestCase):
         self.assertEqual(tok, "ya29.refreshed")
         self.assertEqual(t["refresh_token"], "1//google-refresh")  # Google omits it on refresh; keep ours
 
+    def test_merge_counters_keeps_larger_total(self):
+        h = History(os.path.join(self.tmp, "merge.sqlite"))
+        m = month_key()
+        h.track_cumulative("moonshot", "balance", 28.0, "topup", "USD", kind_down="spend")  # Pi's baseline
+        h.track_cumulative("moonshot", "balance", 27.5, "topup", "USD", kind_down="spend")  # Pi saw 0.50 spend
+        n = h.merge_counters([
+            {"platform": "moonshot", "month": m, "kind": "spend", "currency": "USD", "value": 6.5, "first_seen": 1.0},
+            {"platform": "openrouter", "month": m, "kind": "key_month", "currency": "USD", "value": 10.61},
+            {"platform": "x", "month": "bad", "kind": "spend", "currency": "USD", "value": 1},       # rejected
+            {"platform": "x", "month": m, "kind": "spend", "currency": "USD", "value": -3}])          # rejected
+        c = h.counters(m)
+        self.assertEqual(n, 2)
+        self.assertAlmostEqual(c["moonshot"]["spend"]["value"], 6.5)       # PC's longer total wins, no double count
+        self.assertAlmostEqual(c["openrouter"]["key_month"]["value"], 10.61)
+        self.assertEqual(h.merge_counters([{"platform": "moonshot", "month": m, "kind": "spend", "currency": "USD", "value": 2.0}]), 0)
+        self.assertAlmostEqual(h.counters(m)["moonshot"]["spend"]["value"], 6.5)  # smaller value never lowers it
+        h.conn.close()
+
     def test_period_total_counter(self):
         h = History(os.path.join(self.tmp, "h.sqlite"))
         for v in (5.0, 7.0, 7.0, 2.0):  # 2.0 = billing cycle reset

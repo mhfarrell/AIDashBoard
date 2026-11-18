@@ -4,11 +4,12 @@ SD-card friendly: snapshots are written at most every SNAPSHOT_EVERY seconds per
 WAL mode, and old rows are pruned daily.
 """
 import json
+import re
 import sqlite3
 import threading
 import time
 
-from .util import month_key, now_ts
+from .util import month_key, now_ts, num
 
 SNAPSHOT_EVERY = 15 * 60
 
@@ -147,6 +148,39 @@ class History(object):
         self._ensure_counter(platform, month, kind, currency)
         self._exec("UPDATE counters SET value = value + ? WHERE platform=? AND month=? AND kind=?",
                    (amount, platform, month, kind))
+
+    def all_counters(self):
+        return [{"platform": p, "month": m, "kind": k, "currency": c, "value": v, "first_seen": f}
+                for p, m, k, c, v, f in self._query(
+                    "SELECT platform, month, kind, currency, value, first_seen FROM counters")]
+
+    def merge_counters(self, rows):
+        """Merge spend/top-up counters from another install of this dashboard (push_to_pi).
+
+        Counters are running totals for a month, so the larger value wins: an install that has
+        been watching longer has seen everything the newer one has, plus what came before it.
+        """
+        merged = 0
+        for r in rows:
+            try:
+                p, m, k, c = str(r["platform"])[:32], str(r["month"])[:7], str(r["kind"])[:32], str(r["currency"])[:3].upper()
+                v = float(r["value"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if v < 0 or not re.match(r"^\d{4}-\d{2}$", m):
+                continue
+            cur = self._query("SELECT value, first_seen FROM counters WHERE platform=? AND month=? AND kind=?", (p, m, k))
+            fs = num(r.get("first_seen"))
+            if not cur:
+                self._exec("INSERT INTO counters(platform, month, kind, currency, value, first_seen) VALUES (?,?,?,?,?,?)",
+                           (p, m, k, c, v, fs or now_ts()))
+                merged += 1
+            elif v > cur[0][0] + 1e-9:
+                first = min(x for x in (cur[0][1], fs) if x) if (cur[0][1] or fs) else now_ts()
+                self._exec("UPDATE counters SET value=?, first_seen=? WHERE platform=? AND month=? AND kind=?", (v, first, p, m, k))
+                merged += 1
+        self._months_cache = (0, [])
+        return merged
 
     def counters(self, month):
         """{platform: {kind: {"value","currency","first_seen"}}}"""
