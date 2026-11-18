@@ -91,6 +91,37 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(len(ag), 1)  # unlimited (no reset, full) bucket is skipped
         self.assertEqual(ag[0]["used_pct"], 75.0)
 
+    def test_kimi_code_falls_back_to_international_host(self):
+        calls = []
+
+        def fake_get(url, headers=None, timeout=20):
+            calls.append(url)
+            if url.startswith("https://api.kimi.com"):
+                raise net.UpstreamError("HTTP 401", 401, "invalid key")
+            if url.endswith("/usages"):
+                return {"usages": {"limit_5h": {"used_ratio": 0.4, "reset_time": "2026-11-18T05:00:00Z"}}}
+            return {"user_level_name": "Allegretto"}
+
+        class Ctx(object):
+            cache = {}
+            class store(object):
+                @staticmethod
+                def secret(k): return "sk-kimi-test"
+            @staticmethod
+            def ua(n): return "kimi-code-cli/1.0.0"
+
+        real = net.get_json
+        net.get_json = fake_get
+        try:
+            r = providers.fetch_kimi_code(Ctx)
+            self.assertEqual(r["windows"][0]["used_pct"], 40.0)
+            self.assertEqual(Ctx.cache["kimi_profile"]["host"], "https://api.kimi.ai")
+            calls[:] = []
+            providers.fetch_kimi_code(Ctx)
+            self.assertTrue(calls[0].startswith("https://api.kimi.ai"))  # remembered: no wasted 401 next time
+        finally:
+            net.get_json = real
+
     def test_extract_code(self):
         self.assertEqual(_extract_code("abc#xyz"), ("abc", "xyz"))
         self.assertEqual(_extract_code("http://localhost:1455/auth/callback?code=C1&state=S1"), ("C1", "S1"))

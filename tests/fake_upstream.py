@@ -255,6 +255,7 @@ def start():
         "https://openrouter.ai": base + "/openrouter",
         "https://api.moonshot.ai": base + "/moonshot",
         "https://api.kimi.com": base + "/kimi",
+        "https://api.kimi.ai": base + "/kimi",
         "https://generativelanguage.googleapis.com": base + "/gemini",
         "https://github.com": base + "/github",
         "https://openai.com": base + "/openai-web",

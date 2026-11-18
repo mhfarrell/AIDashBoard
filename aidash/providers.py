@@ -493,7 +493,6 @@ def fetch_moonshot(ctx):
 
 
 # ============================================================================ Kimi Code (subscription)
-KIMI_USAGES = "https://api.kimi.com/coding/v1/usages"
 _KIMI_UNITS = {"TIME_UNIT_MINUTE": 60, "TIME_UNIT_HOUR": 3600, "TIME_UNIT_DAY": 86400, "TIME_UNIT_WEEK": 7 * 86400}
 
 
@@ -544,17 +543,37 @@ def parse_kimi_code(data):
     return windows
 
 
+KIMI_HOSTS = ("https://api.kimi.com", "https://api.kimi.ai")  # kimi.com (China/global) and kimi.ai (international)
+
+
 def fetch_kimi_code(ctx):
     key = ctx.store.secret("kimi_code_api_key")
     if not key:
         raise net.UpstreamError("Add your Kimi Code API key in Settings.")
-    data = net.get_json(KIMI_USAGES, headers={"x-api-key": key.strip(), "User-Agent": ctx.ua("kimi_code")})
+    key = key.strip()
+    cache = ctx.cache.setdefault("kimi_profile", {})
+    # Keys are tied to the account's region: try the host that worked last, then the other one.
+    hosts = sorted(KIMI_HOSTS, key=lambda h: h != cache.get("host"))
+    data, last = None, None
+    for host in hosts:
+        try:
+            data = net.get_json(host + "/coding/v1/usages", headers={"x-api-key": key, "Authorization": "Bearer " + key,
+                                                                    "User-Agent": ctx.ua("kimi_code")})
+            cache["host"] = host
+            break
+        except net.UpstreamError as e:
+            last = e
+            if e.status not in (401, 403, 404):
+                raise
+    if data is None:
+        raise net.UpstreamError("Kimi Code rejected the key on both api.kimi.com and api.kimi.ai - it must be a Kimi Code "
+                                "console key (kimi.com/code/console), not a platform.moonshot.ai key. Last: %s" % last.short(),
+                                last.status, last.body)
     windows = parse_kimi_code(data)
     plan = None
-    cache = ctx.cache.setdefault("kimi_profile", {})
     if now_ts() - cache.get("at", 0) > 6 * 3600:
         try:
-            prof = net.get_json("https://api.kimi.com/coding/v1/me", headers={"x-api-key": key.strip()})
+            prof = net.get_json(cache["host"] + "/coding/v1/me", headers={"x-api-key": key, "Authorization": "Bearer " + key})
             cache.update(at=now_ts(), plan=(prof.get("user_level_name") or "").strip() or None)
         except net.UpstreamError:
             cache["at"] = now_ts() - 5 * 3600
