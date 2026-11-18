@@ -91,6 +91,19 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(len(ag), 1)  # unlimited (no reset, full) bucket is skipped
         self.assertEqual(ag[0]["used_pct"], 75.0)
 
+    def test_kimi_code_real_shape_with_monthly_code(self):
+        # shape captured live from a Kimi Code Pro account (2026-11-18)
+        data = {"limits": [{"window": {"duration": 300, "timeUnit": "TIME_UNIT_MINUTE"},
+                            "detail": {"limit": "100", "remaining": "100", "resetTime": "2026-11-18T05:44:05.026767Z"}}],
+                "usages": {"limit_5h": {"used_ratio": 0, "reset_time": "2026-11-18T05:44:04Z"},
+                           "limit_month_total": {"used_ratio": 0.25, "reset_time": "2026-12-18T00:44:14Z"},
+                           "limit_month_code": {"used_ratio": 0.5, "reset_time": "2026-12-18T00:44:14Z"}}}
+        w = providers.parse_kimi_code(data)
+        self.assertEqual([(x["label"], x["used_pct"]) for x in w], [("5-hour", 0.0), ("Monthly", 25.0), ("Monthly (code)", 50.0)])
+        cols = costs.usage_columns(w)
+        self.assertEqual(cols["5h"]["pct"], 0.0)
+        self.assertEqual((cols["special"]["label"], cols["special"]["pct"]), ("Monthly (code)", 50.0))
+
     def test_kimi_code_falls_back_to_international_host(self):
         calls = []
 

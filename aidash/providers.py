@@ -529,12 +529,16 @@ def parse_kimi_code(data):
         seen.add(ws)
         windows.append(_window(key, label, c[0], c[1], ws))
     usages = rec(data.get("usages"))
-    for src, label, ws in (("limit_5h", "5-hour", FIVE_H), ("limit_7d", "7-day", WEEK), ("limit_month_total", "Monthly", 30 * 86400)):
+    # 5h / 7d entries duplicate the limits[] windows (dedupe by length); the monthly ones are
+    # distinct allowances that share a length (total vs code), so they dedupe by name.
+    for src, label, ws, dedupe in (("limit_5h", "5-hour", FIVE_H, FIVE_H), ("limit_7d", "7-day", WEEK, WEEK),
+                                   ("limit_month_total", "Monthly", 30 * 86400, "month_total"),
+                                   ("limit_month_code", "Monthly (code)", 30 * 86400, "month_code")):
         u = rec(usages.get(src))
         ratio = num(u.get("used_ratio"), num(u.get("usedRatio")))
-        if ratio is None or ws in seen:
+        if ratio is None or dedupe in seen:
             continue
-        seen.add(ws)
+        seen.add(dedupe)
         windows.append(_window("kimi_%s" % src, label, ratio * 100.0, u.get("reset_time") or u.get("resetTime"), ws))
     if WEEK not in seen:
         c = _kimi_count(data.get("usage"))
