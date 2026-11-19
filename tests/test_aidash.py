@@ -90,6 +90,17 @@ class ParserTests(unittest.TestCase):
             {"window": "5h", "remaining": {"remainingFraction": 1.0}}]}]}})
         self.assertEqual(len(ag), 1)  # unlimited (no reset, full) bucket is skipped
         self.assertEqual(ag[0]["used_pct"], 75.0)
+        self.assertEqual(ag[0]["pool"], "Gemini Models")
+
+    def test_parsers_tag_model_pools(self):
+        cl, _, _, _ = providers.parse_claude_usage({"limits": [
+            {"kind": "session", "percent": 10}, {"kind": "weekly_all", "percent": 20},
+            {"kind": "weekly_scoped", "percent": 30, "scope": {"model": "Fable"}}]})
+        self.assertEqual([w.get("pool") for w in cl], [None, None, "Fable"])
+        cx, _, _, _ = providers.parse_codex_usage({
+            "rate_limit": {"primary_window": {"used_percent": 5, "limit_window_seconds": 18000}},
+            "additional_rate_limits": [{"limit_name": "Spark", "rate_limit": {"primary_window": {"used_percent": 50, "limit_window_seconds": 18000}}}]})
+        self.assertEqual([w.get("pool") for w in cx], [None, "Spark"])
 
     def test_kimi_code_real_shape_with_monthly_code(self):
         # shape captured live from a Kimi Code Pro account (2026-11-18)
@@ -100,9 +111,7 @@ class ParserTests(unittest.TestCase):
                            "limit_month_code": {"used_ratio": 0.5, "reset_time": "2026-12-18T00:44:14Z"}}}
         w = providers.parse_kimi_code(data)
         self.assertEqual([(x["label"], x["used_pct"]) for x in w], [("5-hour", 0.0), ("Monthly", 25.0), ("Monthly (code)", 50.0)])
-        cols = costs.usage_columns(w)
-        self.assertEqual(cols["5h"]["pct"], 0.0)
-        self.assertEqual((cols["special"]["label"], cols["special"]["pct"]), ("Monthly (code)", 50.0))
+        self.assertEqual(costs.limit_status(w, 0)["level"], "green")
 
     def test_kimi_code_falls_back_to_international_host(self):
         calls = []
@@ -154,23 +163,76 @@ class FakeFX(object):
 
 
 class CostTests(unittest.TestCase):
-    def test_usage_columns_separate_generic_and_special(self):
-        windows = [{"key": "session", "label": "5-hour session", "used_pct": 43},
-                   {"key": "weekly", "label": "Weekly (all models)", "used_pct": 22},
-                   {"key": "weekly_fable", "label": "Weekly Fable", "used_pct": 34},
-                   {"key": "weekly_opus", "label": "Weekly Opus", "used_pct": 8},
-                   {"key": "monthly", "label": "Monthly ($60)", "used_pct": 59},
-                   {"key": "credits", "label": "Credits used (lifetime)", "used_pct": 53}]
-        cols = costs.usage_columns(windows)
-        self.assertEqual(cols["5h"]["pct"], 43)
-        self.assertEqual(cols["weekly"]["pct"], 22)
-        self.assertEqual((cols["special"]["pct"], cols["special"]["label"]), (59, "Monthly ($60)"))
-        self.assertEqual(costs.window_category(windows[2]), "special")
-        self.assertEqual(costs.special_label(windows[2]), "Fable")
-        # generic worst ignores special (Fable > overall weekly)
+    NOW = 1_000_000
+
+    def _w(self, key, pct, reset_in, ws, pool=None, label=None):
+        w = {"key": key, "label": label or key, "used_pct": pct, "resets_at": self.NOW + reset_in, "window_s": ws}
+        if pool:
+            w["pool"] = pool
+        return w
+
+    def test_status_longest_maxed_window_decides_the_reset(self):
+        H, D = 3600, 86400
+        w = [self._w("session", 100, 2 * H, 5 * H), self._w("weekly", 60, 3 * D, 7 * D),
+             self._w("monthly", 100, 20 * D, 30 * D)]
+        s = costs.limit_status(w, self.NOW)
+        self.assertEqual((s["level"], s["label"], s["resets_at"]), ("red", "Inactive", self.NOW + 20 * D))
+        w[2]["used_pct"] = 40  # monthly fine: now the 5h is the blocker
+        self.assertEqual(costs.limit_status(w, self.NOW)["resets_at"], self.NOW + 2 * H)
+        w[0]["resets_at"] = self.NOW - 1  # a window whose reset already passed counts as reset
+        self.assertEqual(costs.limit_status(w, self.NOW)["level"], "green")
+
+    def test_status_blocked_reset_is_the_latest_and_credit_keeps_it_usable(self):
+        D = 86400
+        # monthly maxed but clears tomorrow; weekly maxed and clears in 5 days -> 5 days
+        w = [self._w("weekly", 100, 5 * D, 7 * D), self._w("monthly", 100, 1 * D, 30 * D)]
+        self.assertEqual(costs.limit_status(w, self.NOW)["resets_at"], self.NOW + 5 * D)
+        # Claude limits spent but extra-usage credit left -> still usable (amber), same reset
+        tile = {"status": "ok"}
+        s = costs.platform_status(tile, w, 12.0, self.NOW)
+        self.assertEqual((s["level"], s["label"], s["resets_at"]), ("amber", "On credit", self.NOW + 5 * D))
+        self.assertEqual(costs.platform_status(tile, w, 0.0, self.NOW)["level"], "red")
+
+    def test_status_low_and_green(self):
+        H, D = 3600, 86400
+        w = [self._w("session", 30, 2 * H, 5 * H), self._w("weekly", 85, 3 * D, 7 * D)]
+        s = costs.limit_status(w, self.NOW)
+        self.assertEqual((s["level"], s["label"], s["resets_at"]), ("amber", "Low", self.NOW + 3 * D))
+        w[1]["used_pct"] = 10
+        s = costs.limit_status(w, self.NOW)
+        self.assertEqual((s["level"], s["resets_at"]), ("green", self.NOW + 2 * H))  # nearest reset
+
+    def test_status_pools_antigravity_and_claude(self):
+        D = 86400
+        ag = [self._w("g_session", 20, 3600, 5 * 3600, "Gemini Models"), self._w("g_weekly", 45, 5 * D, 7 * D, "Gemini Models"),
+              self._w("cg_weekly", 100, 2 * D, 7 * D, "Claude & GPT Models")]
+        s = costs.limit_status(ag, self.NOW)
+        self.assertEqual((s["level"], s["label"], s["resets_at"]), ("amber", "Partial", self.NOW + 2 * D))
+        self.assertIn("Claude & GPT Models", s["detail"])
+        ag[1]["used_pct"] = 100
+        s = costs.limit_status(ag, self.NOW)
+        self.assertEqual((s["level"], s["resets_at"]), ("red", self.NOW + 2 * D))  # back when the first pool returns
+        # Claude: Fable weekly maxed = partial; the all-models weekly maxed = everything blocked.
+        cl = [self._w("session", 10, 3600, 5 * 3600), self._w("weekly", 40, 4 * D, 7 * D),
+              self._w("weekly_fable", 100, 4 * D, 7 * D, "Fable")]
+        self.assertEqual(costs.limit_status(cl, self.NOW)["label"], "Partial")
+        cl[1]["used_pct"] = 100
+        self.assertEqual(costs.limit_status(cl, self.NOW)["level"], "red")
+
+    def test_status_credits_and_tile_state(self):
+        self.assertEqual(costs.credit_status(20)["level"], "green")
+        self.assertEqual(costs.credit_status(2)["level"], "amber")
+        self.assertEqual(costs.credit_status(0)["level"], "red")
+        self.assertIsNone(costs.platform_status({"status": "unconfigured"}, [], None, self.NOW))
+        self.assertEqual(costs.platform_status({"status": "stale"}, [], 10, self.NOW)["level"], "grey")
+        # OpenRouter: lifetime credits window ignored, balance decides
+        life = [{"key": "credits", "label": "Credits used (lifetime)", "used_pct": 99, "resets_at": None, "window_s": None}]
+        self.assertEqual(costs.platform_status({"status": "ok"}, life, 0.0, self.NOW)["level"], "red")
         cfg = {"display_currency": "USD", "subscriptions": []}
-        row = [r for r in costs.compute(month_key(), cfg, {"claude": {"data": {"windows": windows}}}, {}, FakeFX())["rows"] if r["platform"] == "claude"][0]
-        self.assertEqual(row["usage_pct"], 43)
+        live = {"key": "monthly", "label": "Monthly", "used_pct": 100, "resets_at": __import__("time").time() + 86400, "window_s": 30 * 86400}
+        state = {"opencode": {"status": "ok", "data": {"windows": [live]}}}
+        row = [r for r in costs.compute(month_key(), cfg, state, {}, FakeFX())["rows"] if r["platform"] == "opencode"][0]
+        self.assertEqual(row["status"]["level"], "red")
 
     def test_total_is_subs_plus_spend_not_topups(self):
         m = month_key()

@@ -8,7 +8,7 @@ to a cash-flow view (subscriptions + top-ups) using `total_cashflow`.
 import time
 
 from .providers import PLATFORMS, PLATFORM_NAMES
-from .util import month_key, month_start_ts
+from .util import month_key, month_start_ts, now_ts
 
 LIFETIME_WINDOWS = ("credits",)
 
@@ -55,47 +55,111 @@ def list_price(platform, plan, display_currency, price_map=None):
     return float(prices[cur]), cur
 
 
-def window_category(w):
-    """Map a provider quota window to the three comparison columns: 5h, weekly, special.
+LOW_PCT = 80.0      # a quota window at/over this is "nearly spent" (amber)
+LOW_CREDIT = 5.0    # a prepaid balance under this (display currency) is "nearly spent" (amber)
+_RANK = {"green": 0, "amber": 1, "red": 2}
 
-    Generic weekly allowances (all models) are weekly; model-scoped/family buckets, additional
-    Codex limits, monthly allowances and unclassified model quotas belong in special instead.
-    Returns None for lifetime balances/credit totals that aren't a rolling usage window.
+
+def _live_pct(w, now):
+    """Used % of a window; one whose reset time has already passed counts as reset (0%)."""
+    ra = w.get("resets_at")
+    if ra and ra <= now:
+        return 0.0
+    return w.get("used_pct") or 0.0
+
+
+def _length(w):
+    # Monthly outranks weekly outranks 5h; caps with no period (spend caps) outrank everything.
+    return w.get("window_s") or float("inf")
+
+
+def _longest_at(windows, threshold, now):
+    """The longest window at/over `threshold` (monthly, then weekly, then 5h)."""
+    hits = [w for w in windows if _live_pct(w, now) >= threshold]
+    return max(hits, key=_length) if hits else None
+
+
+def _blocker(windows, now):
+    """The maxed-out window that clears LAST: if the monthly is spent, the 5h reset is irrelevant."""
+    hits = [w for w in windows if _live_pct(w, now) >= 100.0]
+    return max(hits, key=lambda w: (w.get("resets_at") or float("inf"), _length(w))) if hits else None
+
+
+def _st(level, label, detail, w=None):
+    return {"level": level, "label": label, "detail": detail,
+            "resets_at": w.get("resets_at") if w else None,
+            "reset_label": w.get("label") if w else None}
+
+
+def limit_status(windows, now):
+    """Traffic light + the one reset that matters, from a platform's quota windows.
+
+    Windows tagged with a `pool` (a model family: Antigravity's Gemini vs Claude & GPT, Claude's
+    Fable weekly, Codex Spark) are separate allowances that ALSO count against the untagged
+    (all-models) windows. The platform is red only when every pool is blocked.
     """
-    if w.get("key") in LIFETIME_WINDOWS or w.get("used_pct") is None:
+    quota = [w for w in windows or [] if w.get("key") not in LIFETIME_WINDOWS and w.get("used_pct") is not None]
+    if not quota:
         return None
-    key = str(w.get("key") or "").lower()
-    label = str(w.get("label") or "").strip()
-    low = label.lower()
-    if key == "session" or "5-hour" in low or low.startswith("5h"):
-        if "models" in low or key.startswith(("spark_", "model_")):
-            return "special"
-        return "5h"
-    if key == "weekly" or low in ("weekly", "weekly (all models)", "7-day"):
-        return "weekly"
-    return "special"
+    generic = [w for w in quota if not w.get("pool")]
+    names = []
+    for w in quota:
+        if w.get("pool") and w["pool"] not in names:
+            names.append(w["pool"])
+    pools = ([("", generic)] if generic else []) + [(n, generic + [w for w in quota if w.get("pool") == n]) for n in names]
+    blocked = [(n, _blocker(ws, now)) for n, ws in pools]
+    blocked = [(n, w) for n, w in blocked if w]
+
+    def soonest(ws):
+        known = [w for w in ws if w.get("resets_at")]
+        return min(known, key=lambda w: w["resets_at"]) if known else (ws[0] if ws else None)
+
+    if blocked and len(blocked) == len(pools):
+        w = soonest([w for _, w in blocked])  # back as soon as ANY pool comes back
+        return _st("red", "Inactive", "%s at 100%%" % w.get("label"), w)
+    if blocked:
+        w = soonest([w for _, w in blocked])
+        return _st("amber", "Partial", ", ".join(n or "All models" for n, _ in blocked) + " blocked", w)
+    w = _longest_at(quota, LOW_PCT, now)
+    if w:
+        return _st("amber", "Low", "%s at %d%%" % (w.get("label"), round(_live_pct(w, now))), w)
+    upcoming = [w for w in quota if _live_pct(w, now) > 0 and (w.get("resets_at") or 0) > now]
+    w = min(upcoming, key=lambda w: w["resets_at"]) if upcoming else None
+    return _st("green", "Active", "All limits below %d%%" % LOW_PCT, w)
 
 
-def special_label(w):
-    """Short model/period name for the Special column (e.g. 'Weekly Fable' -> 'Fable')."""
-    label = str(w.get("label") or w.get("key") or "Other")
-    label = label.replace(" · Weekly", "").replace(" · weekly", "")
-    if label.lower().startswith("weekly "):
-        label = label[7:]
-    return label.strip() or "Other"
+def credit_status(balance):
+    """Prepaid balance (display currency) -> traffic light. No reset: credit only comes back by topping up."""
+    if balance is None:
+        return None
+    if balance <= 0.01:
+        return _st("red", "Inactive", "No credit left - top up")
+    if balance < LOW_CREDIT:
+        return _st("amber", "Low", "Credit nearly spent")
+    return _st("green", "Active", "Credit available")
 
 
-def usage_columns(windows):
-    """{'5h': {...}|None, 'weekly': {...}|None, 'special': {...}|None}; worst per column."""
-    out = {"5h": None, "weekly": None, "special": None}
-    for w in windows or []:
-        cat = window_category(w)
-        if not cat:
-            continue
-        item = {"pct": w["used_pct"], "label": special_label(w) if cat == "special" else w.get("label")}
-        if out[cat] is None or item["pct"] > out[cat]["pct"]:
-            out[cat] = item
-    return out
+def platform_status(tile, windows, balance, now):
+    """One status per platform for the breakdown table, or None when there's nothing to say."""
+    st = (tile or {}).get("status")
+    if not tile or st in (None, "unconfigured", "disabled", "pending"):
+        return None
+    if st != "ok":
+        label = {"stale": "Stale", "relogin": "Log in again", "error": "Error"}.get(st, st.title())
+        return _st("grey", label, (tile.get("error") or "Showing no live status") if st != "stale" else "Last refresh failed")
+    lim = limit_status(windows, now)
+    cred = credit_status(balance)
+    periodic = any(w.get("window_s") for w in windows or [] if w.get("key") not in LIFETIME_WINDOWS)
+    if lim and periodic:
+        # Subscription quotas decide - but quotas spent with prepaid credit left (Claude extra
+        # usage) still works, just on paid credit until the reset.
+        if lim["level"] == "red" and cred and cred["level"] != "red":
+            return dict(lim, level="amber", label="On credit",
+                        detail="%s - running on prepaid credit until the reset" % lim["detail"])
+        return lim  # an extra-usage balance never makes a working subscription look "inactive"
+    if lim and cred:  # e.g. OpenRouter: a key spend cap and a credit balance - the worse one wins
+        return lim if _RANK[lim["level"]] >= _RANK[cred["level"]] else cred
+    return lim or cred
 
 
 def _fmt_date(ts):
@@ -226,14 +290,7 @@ def compute(month, cfg, state, counters, fx):
         for b in data.get("balances") or []:
             if b.get("key") in ("credits", "available") and b.get("currency"):
                 balance = conv(b.get("amount"), b["currency"])
-        windows = data.get("windows") or []
-        # The tightest GENERIC window is used for summaries, not model-scoped specials.
-        cols = usage_columns(windows)
-        worst = None
-        for cat in ("5h", "weekly"):
-            item = cols[cat]
-            if item and (worst is None or item["pct"] > worst["used_pct"]):
-                worst = {"used_pct": item["pct"], "label": item["label"]}
+        status = platform_status(tile, data.get("windows") or [], balance, now_ts())
 
         total = subs + spend
         if total == 0 and topups == 0 and balance is None and not data and p not in known:
@@ -246,9 +303,7 @@ def compute(month, cfg, state, counters, fx):
             "total": round(total, 2),
             "topups": round(topups, 2),
             "balance_left": balance,
-            "usage_pct": worst["used_pct"] if worst else None,
-            "usage_label": worst["label"] if worst else None,
-            "usage_columns": cols,
+            "status": status,
             "items": items,
         })
 

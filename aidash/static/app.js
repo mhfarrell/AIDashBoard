@@ -50,6 +50,12 @@
     if (h) return "resets in " + h + "h " + m + "m";
     return "resets in " + m + "m";
   }
+  function countdown(ts) {
+    var s = ts - Date.now() / 1000;
+    if (s <= 60) return s > 0 ? "&lt;1m" : "now";
+    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+    return d ? d + "d " + h + "h" : (h ? h + "h " + m + "m" : m + "m");
+  }
   function day(ts) { return ts ? new Date(ts * 1000).toLocaleDateString([], { day: "numeric", month: "short" }) : ""; }
   function monthLabel(m) { var p = m.split("-"); return new Date(+p[0], +p[1] - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }); }
   function shortMonth(m) { var p = m.split("-"); return new Date(+p[0], +p[1] - 1, 1).toLocaleDateString(undefined, { month: "short" }); }
@@ -255,26 +261,26 @@
     var tb = $("#bd-table tbody");
     tb.innerHTML = rows.map(function (r) {
       var open = !!S.open[r.platform];
-      var usageCell = function (cat) {
-        var u = r.usage_columns && r.usage_columns[cat];
-        if (!u) return dash;
-        var text = pct(u.pct) + (cat === "special" ? ' <span class="muted small">' + esc(u.label || "") + "</span>" : "");
-        return '<span class="mini-meter" aria-hidden="true"><i style="width:' + Math.min(100, u.pct) + '%"></i></span>' + text;
-      };
+      var s = r.status;
+      // data-tip is rendered with innerHTML, so text is escaped twice (once for the attribute).
+      var statusCell = s ? '<span class="lvl" tabindex="0" data-tip="' + esc(esc(s.detail || "")) + '"><span class="sdot lv-' + s.level + '" aria-hidden="true"></span>' + esc(s.label) + "</span>" : dash;
+      var resetCell = s && s.resets_at
+        ? '<span class="reset' + (s.level === "red" || s.level === "amber" ? " hot" : "") + '" data-reset="' + s.resets_at + '" tabindex="0" data-tip="' +
+          esc(esc((s.reset_label || "Reset") + " · ") + new Date(s.resets_at * 1000).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })) + '">' + countdown(s.resets_at) + "</span>"
+        : (s && s.level === "red" && s.reset_label ? '<span class="muted">unknown</span>' : dash);
       var share = grand ? (100 * rowTotal(r) / grand).toFixed(1) + "%" : "—";
       var html = '<tr class="expander" tabindex="0" data-p="' + esc(r.platform) + '" aria-expanded="' + open + '">' +
         '<td class="c-name"><span class="chev">' + (r.items.length ? (open ? "▾" : "▸") : "") + '</span><span class="swatch" style="background:' + color(r.platform) + '"></span>' + esc(r.name) + "</td>" +
         '<td class="num" data-label="Subscription">' + (r.subscription ? money(r.subscription) : dash) + "</td>" +
         '<td class="num" data-label="Credit spend">' + (r.credit_spend ? money(r.credit_spend) : dash) + "</td>" +
         '<td class="num" data-label="Total"><b>' + money(rowTotal(r)) + "</b></td>" +
-        '<td class="num c-hide-sm" data-label="Share">' + share + "</td>" +
-        '<td class="num' + (r.topups ? "" : " c-hide-sm") + '" data-label="Bought">' + (r.topups ? money(r.topups) : dash) + "</td>" +
-        '<td class="num' + (r.balance_left != null ? "" : " c-hide-sm") + '" data-label="Credit left">' + (r.balance_left != null ? money(r.balance_left) : dash) + "</td>" +
-        '<td class="c-usage5h" data-label="5h">' + usageCell("5h") + "</td>" +
-        '<td class="c-usageweekly" data-label="Weekly">' + usageCell("weekly") + "</td>" +
-        '<td class="c-usage' + (!r.usage_columns || !r.usage_columns.special ? " c-hide-sm" : "") + '" data-label="Special">' + usageCell("special") + "</td></tr>";
+        '<td class="num" data-label="Share">' + share + "</td>" +
+        '<td class="num" data-label="Bought">' + (r.topups ? money(r.topups) : dash) + "</td>" +
+        '<td class="num" data-label="Credit left">' + (r.balance_left != null ? money(r.balance_left) : dash) + "</td>" +
+        '<td class="c-status" data-label="Status">' + statusCell + "</td>" +
+        '<td class="c-reset" data-label="Reset">' + resetCell + "</td></tr>";
       if (open && r.items.length) {
-        html += '<tr class="detail"><td colspan="10"><ul class="detail-list">' + r.items.map(function (it) {
+        html += '<tr class="detail"><td colspan="9"><ul class="detail-list">' + r.items.map(function (it) {
           var kind = it.kind === "topup" ? "bought" : (it.kind === "info" ? "replaced" : it.kind);
           return "<li><span>" + esc(it.label) + ' <span class="muted">(' + esc(kind) + (it.original ? ", " + esc(it.original) : "") +
             ')</span></span><span class="num">' + money(it.amount) + "</span></li>";
@@ -283,19 +289,21 @@
       return html;
     }).join("");
     var t = st.costs.totals;
-    var withUse = rows.filter(function (r) { return r.usage_pct != null; });
-    var tight = withUse.slice().sort(function (a, b) { return b.usage_pct - a.usage_pct; })[0];
-    var hot = withUse.filter(function (r) { return r.usage_pct >= 80; }).length;
-    var usageSummary = tight
-      ? '<span class="mini-meter" aria-hidden="true"><i style="width:' + Math.min(100, tight.usage_pct) + '%"></i></span>Tightest ' + pct(tight.usage_pct) +
-        ' <span class="muted small">' + esc(tight.name) + " · " + esc(tight.usage_label || "") + "</span><br>" +
-        '<span class="small">' + (hot ? '<span class="warnline">⚠ ' + hot + " of " + withUse.length + " platform" + (withUse.length > 1 ? "s" : "") + " ≥ 80%</span>"
-          : (withUse.length > 1 ? "all " + withUse.length + " platforms below 80%" : "below 80%")) + "</span>"
-      : dash;
+    var groups = {}, order = { green: 0, amber: 1, red: 2, grey: 3 };
+    rows.forEach(function (r) {
+      if (!r.status) return;
+      var g = groups[r.status.label] = groups[r.status.label] || { level: r.status.level, n: 0 };
+      g.n++;
+    });
+    var summary = Object.keys(groups).sort(function (a, b) { return order[groups[a].level] - order[groups[b].level]; }).map(function (k) {
+      return '<span class="lvl"><span class="sdot lv-' + groups[k].level + '" aria-hidden="true"></span>' + groups[k].n + " " + esc(k.toLowerCase()) + "</span>";
+    }).join(" ");
     $("#bd-table tfoot").innerHTML = '<tr><td class="c-name">All platforms</td>' +
       '<td class="num" data-label="Subscriptions">' + money(t.subscriptions) + '</td><td class="num" data-label="Credit spend">' + money(t.credit_spend) + "</td>" +
-      '<td class="num" data-label="Total">' + money(S.credits === "bought" ? t.total_cashflow : t.total) + '</td><td class="num c-hide-sm" data-label="Share">100%</td>' +
-      '<td class="num" data-label="Bought">' + money(t.topups) + '</td><td class="num c-hide-sm" data-label="Credit left">' + $("#t-balance").textContent + '</td><td colspan="3" class="c-usage" data-label="Usage (tightest generic)">' + usageSummary + "</td></tr>";
+      '<td class="num" data-label="Total">' + money(S.credits === "bought" ? t.total_cashflow : t.total) + '</td><td class="num" data-label="Share">100%</td>' +
+      '<td class="num" data-label="Bought">' + money(t.topups) + '</td><td class="num" data-label="Credit left">' + $("#t-balance").textContent + "</td>" +
+      '<td colspan="2" class="c-status" data-label="Status">' + (summary || dash) + "</td></tr>";
+    bindTips($("#bd-table"));
     tb.querySelectorAll("tr.expander").forEach(function (tr) {
       var toggle = function () { var p = tr.getAttribute("data-p"); S.open[p] = !S.open[p]; renderBreakdown(S.state); };
       tr.addEventListener("click", toggle);
@@ -995,6 +1003,10 @@
     if (document.hidden) return;
     if (S.view === "dash") refresh();
   }, REFRESH_MS);
+  setInterval(function () {  // keep the Reset timers ticking between data refreshes
+    if (document.hidden) return;
+    document.querySelectorAll("[data-reset]").forEach(function (el) { el.innerHTML = countdown(+el.getAttribute("data-reset")); });
+  }, 30000);
   setInterval(function () {
     if (document.hidden) return;
     if (S.view === "news") loadNews();

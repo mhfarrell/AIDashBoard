@@ -4,7 +4,8 @@ Every fetcher returns a normalized dict:
   {
     "plan": str | None,
     "account": str | None,
-    "windows":  [{"key","label","used_pct","resets_at"(unix s|None),"window_s"(int|None)}],
+    "windows":  [{"key","label","used_pct","resets_at"(unix s|None),"window_s"(int|None),
+                  "pool"(optional: model family with its own allowance, e.g. "Gemini Models")}],
     "balances": [{"key","label","amount","currency"}],
     "metrics":  {...provider specific numbers used by the cost engine...},
     "notes":    [str],
@@ -96,7 +97,10 @@ def parse_claude_usage(data):
             key, label, ws = "weekly", "Weekly (all models)", WEEK
         else:
             key, label, ws = "weekly_%s" % (mname or i), "Weekly %s" % (mname or "scoped"), WEEK
-        windows.append(_window(key, label, pct, reset, ws))
+        w = _window(key, label, pct, reset, ws)
+        if kind == "weekly_scoped":
+            w["pool"] = mname or "scoped"
+        windows.append(w)
         seen.add(key)
     # Older shape: five_hour / seven_day / seven_day_<model> with utilization + resets_at.
     if "session" not in seen and isinstance(data.get("five_hour"), dict):
@@ -111,7 +115,9 @@ def parse_claude_usage(data):
             name = _LEGACY_MODEL_NAMES.get(name, name).replace("_", " ").title()
             key = "weekly_" + name.lower()
             if key not in seen:
-                windows.append(_window(key, "Weekly %s" % name, v.get("utilization"), v.get("resets_at"), WEEK))
+                w = _window(key, "Weekly %s" % name, v.get("utilization"), v.get("resets_at"), WEEK)
+                w["pool"] = name
+                windows.append(w)
     metrics, notes, balances = {}, [], []
     extra = rec(data.get("extra_usage"))
     spend = rec(data.get("spend"))
@@ -228,6 +234,7 @@ def parse_codex_usage(data):
             if w:
                 w["key"] = "%s_%s" % (name, w["key"])
                 w["label"] = "%s · %s" % (name, w["label"])
+                w["pool"] = name
                 windows.append(w)
     balances, notes = [], []
     credits = rec(data.get("credits"))
@@ -323,7 +330,9 @@ def parse_ag_summary(data):
             used = (1 - clamp(frac, 0.0, 1.0)) * 100
             label = "%s · %s" % (gname, "5-hour" if wn == "session" else "Weekly")
             key = "%s_%s" % (gname.lower().replace(" ", "_"), wn)
-            windows.append(_window(key, label, used, reset, FIVE_H if wn == "session" else WEEK))
+            w = _window(key, label, used, reset, FIVE_H if wn == "session" else WEEK)
+            w["pool"] = gname  # model groups are independent allowances
+            windows.append(w)
     return windows
 
 
@@ -342,7 +351,9 @@ def parse_ag_models(data):
         if sig in seen:
             continue
         seen.add(sig)
-        windows.append(_window("model_" + mid, name, (1 - clamp(frac, 0.0, 1.0)) * 100, reset, None))
+        w = _window("model_" + mid, name, (1 - clamp(frac, 0.0, 1.0)) * 100, reset, None)
+        w["pool"] = name
+        windows.append(w)
     return windows[:8]
 
 
