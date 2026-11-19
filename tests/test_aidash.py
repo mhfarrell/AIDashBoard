@@ -190,7 +190,7 @@ class CostTests(unittest.TestCase):
         # Claude limits spent but extra-usage credit left -> still usable (amber), same reset
         tile = {"status": "ok"}
         s = costs.platform_status(tile, w, 12.0, self.NOW)
-        self.assertEqual((s["level"], s["label"], s["resets_at"]), ("amber", "On credit", self.NOW + 5 * D))
+        self.assertEqual((s["level"], s["label"], s["resets_at"], s["short"]), ("amber", "On credit", self.NOW + 5 * D, "on credit"))
         self.assertEqual(costs.platform_status(tile, w, 0.0, self.NOW)["level"], "red")
 
     def test_status_low_and_green(self):
@@ -198,6 +198,7 @@ class CostTests(unittest.TestCase):
         w = [self._w("session", 30, 2 * H, 5 * H), self._w("weekly", 85, 3 * D, 7 * D)]
         s = costs.limit_status(w, self.NOW)
         self.assertEqual((s["level"], s["label"], s["resets_at"]), ("amber", "Low", self.NOW + 3 * D))
+        self.assertEqual(s["short"], "85% weekly")
         w[1]["used_pct"] = 10
         s = costs.limit_status(w, self.NOW)
         self.assertEqual((s["level"], s["resets_at"]), ("green", self.NOW + 2 * H))  # nearest reset
@@ -207,15 +208,17 @@ class CostTests(unittest.TestCase):
         ag = [self._w("g_session", 20, 3600, 5 * 3600, "Gemini Models"), self._w("g_weekly", 45, 5 * D, 7 * D, "Gemini Models"),
               self._w("cg_weekly", 100, 2 * D, 7 * D, "Claude & GPT Models")]
         s = costs.limit_status(ag, self.NOW)
-        self.assertEqual((s["level"], s["label"], s["resets_at"]), ("amber", "Partial", self.NOW + 2 * D))
+        self.assertEqual((s["level"], s["label"], s["resets_at"]), ("amber", "Limited", self.NOW + 2 * D))
         self.assertIn("Claude & GPT Models", s["detail"])
+        self.assertEqual(s["short"], "Gemini only")
         ag[1]["used_pct"] = 100
         s = costs.limit_status(ag, self.NOW)
         self.assertEqual((s["level"], s["resets_at"]), ("red", self.NOW + 2 * D))  # back when the first pool returns
         # Claude: Fable weekly maxed = partial; the all-models weekly maxed = everything blocked.
         cl = [self._w("session", 10, 3600, 5 * 3600), self._w("weekly", 40, 4 * D, 7 * D),
               self._w("weekly_fable", 100, 4 * D, 7 * D, "Fable")]
-        self.assertEqual(costs.limit_status(cl, self.NOW)["label"], "Partial")
+        s = costs.limit_status(cl, self.NOW)
+        self.assertEqual((s["label"], s["short"]), ("Limited", "Fable used up"))
         cl[1]["used_pct"] = 100
         self.assertEqual(costs.limit_status(cl, self.NOW)["level"], "red")
 
@@ -225,6 +228,8 @@ class CostTests(unittest.TestCase):
         self.assertEqual(costs.credit_status(0)["level"], "red")
         self.assertIsNone(costs.platform_status({"status": "unconfigured"}, [], None, self.NOW))
         self.assertEqual(costs.platform_status({"status": "stale"}, [], 10, self.NOW)["level"], "grey")
+        # connected, but nothing reported (Gemini API key) -> usable
+        self.assertEqual(costs.platform_status({"status": "ok", "data": {}}, [], None, self.NOW)["label"], "Active")
         # OpenRouter: lifetime credits window ignored, balance decides
         life = [{"key": "credits", "label": "Credits used (lifetime)", "used_pct": 99, "resets_at": None, "window_s": None}]
         self.assertEqual(costs.platform_status({"status": "ok"}, life, 0.0, self.NOW)["level"], "red")

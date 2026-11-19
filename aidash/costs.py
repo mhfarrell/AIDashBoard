@@ -85,10 +85,31 @@ def _blocker(windows, now):
     return max(hits, key=lambda w: (w.get("resets_at") or float("inf"), _length(w))) if hits else None
 
 
-def _st(level, label, detail, w=None):
-    return {"level": level, "label": label, "detail": detail,
+def _st(level, label, detail, w=None, short=None):
+    # short: a few words shown next to the platform name in the hero's "Available now" line
+    return {"level": level, "label": label, "detail": detail, "short": short,
             "resets_at": w.get("resets_at") if w else None,
             "reset_label": w.get("label") if w else None}
+
+
+def _pool_name(name):
+    """'Gemini Models' -> 'Gemini', 'Claude and GPT models' -> 'Claude and GPT'."""
+    name = (name or "").strip()
+    return name[:-7].strip() if name.lower().endswith(" models") else name
+
+
+def _period(w):
+    """'5h' / 'weekly' / 'monthly' for a window (prefixed with its model pool), else its label."""
+    ws = w.get("window_s")
+    if ws and ws <= 6 * 3600:
+        p = "%dh" % round(ws / 3600.0)
+    elif ws and 6 * 86400 <= ws <= 8 * 86400:
+        p = "weekly"
+    elif ws and ws >= 28 * 86400:
+        p = "monthly"
+    else:
+        return w.get("label") or "limit"
+    return ("%s %s" % (_pool_name(w["pool"]), p)) if w.get("pool") else p
 
 
 def limit_status(windows, now):
@@ -119,10 +140,18 @@ def limit_status(windows, now):
         return _st("red", "Inactive", "%s at 100%%" % w.get("label"), w)
     if blocked:
         w = soonest([w for _, w in blocked])
-        return _st("amber", "Partial", ", ".join(n or "All models" for n, _ in blocked) + " blocked", w)
+        gone = [n for n, _ in blocked]
+        left = [n for n, _ in pools if n not in gone]
+        if all(left):  # only named model groups still work: say which
+            short = " & ".join(_pool_name(n) for n in left) + " only"
+        else:
+            short = " & ".join(_pool_name(n) for n in gone) + " used up"
+        return _st("amber", "Limited", ", ".join(n or "All models" for n in gone) + " used up - " +
+                   ", ".join(n or "other models" for n in left) + " still available", w, short)
     w = _longest_at(quota, LOW_PCT, now)
     if w:
-        return _st("amber", "Low", "%s at %d%%" % (w.get("label"), round(_live_pct(w, now))), w)
+        pct = round(_live_pct(w, now))
+        return _st("amber", "Low", "%s at %d%%" % (w.get("label"), pct), w, "%d%% %s" % (pct, _period(w)))
     upcoming = [w for w in quota if _live_pct(w, now) > 0 and (w.get("resets_at") or 0) > now]
     w = min(upcoming, key=lambda w: w["resets_at"]) if upcoming else None
     return _st("green", "Active", "All limits below %d%%" % LOW_PCT, w)
@@ -135,7 +164,7 @@ def credit_status(balance):
     if balance <= 0.01:
         return _st("red", "Inactive", "No credit left - top up")
     if balance < LOW_CREDIT:
-        return _st("amber", "Low", "Credit nearly spent")
+        return _st("amber", "Low", "Credit nearly spent", short="credit low")
     return _st("green", "Active", "Credit available")
 
 
@@ -154,12 +183,15 @@ def platform_status(tile, windows, balance, now):
         # Subscription quotas decide - but quotas spent with prepaid credit left (Claude extra
         # usage) still works, just on paid credit until the reset.
         if lim["level"] == "red" and cred and cred["level"] != "red":
-            return dict(lim, level="amber", label="On credit",
+            return dict(lim, level="amber", label="On credit", short="on credit",
                         detail="%s - running on prepaid credit until the reset" % lim["detail"])
         return lim  # an extra-usage balance never makes a working subscription look "inactive"
     if lim and cred:  # e.g. OpenRouter: a key spend cap and a credit balance - the worse one wins
         return lim if _RANK[lim["level"]] >= _RANK[cred["level"]] else cred
-    return lim or cred
+    # Connected but nothing to measure (e.g. a Gemini API key: Google exposes no usage, limit or
+    # balance for keys). The poll itself proves the key works, so it's usable.
+    return lim or cred or _st("green", "Active", "Connected and working - this platform reports no usage "
+                                                  "or limits, so there's nothing to run out of as far as the dashboard can see")
 
 
 def _fmt_date(ts):

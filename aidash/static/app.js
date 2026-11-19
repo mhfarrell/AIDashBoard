@@ -200,6 +200,7 @@
     var bal = 0, any = false;
     st.costs.rows.forEach(function (r) { if (r.balance_left != null) { bal += r.balance_left; any = true; } });
     $("#t-balance").textContent = any ? money(bal) : "—";
+    renderAvailability(st);
     var CREDIT = { openrouter: "OpenRouter", moonshot: "Moonshot (Kimi API)" };
     var missing = st.platforms.filter(function (p) { return CREDIT[p.id] && p.status === "unconfigured"; }).map(function (p) { return CREDIT[p.id]; });
     var msg = "";
@@ -209,6 +210,46 @@
       '<a href="#/settings">add them as invoices</a>.';
     $("#credit-note").innerHTML = msg;
     $("#credit-note").hidden = !msg;
+  }
+
+  // At-a-glance line under the hero: what works now, what comes back next, what needs a top-up.
+  function renderAvailability(st) {
+    var el = $("#avail");
+    var rows = st.costs.rows.filter(function (r) { return r.status && r.status.level !== "grey"; });
+    if (!rows.length) { el.hidden = true; el.innerHTML = ""; return; }
+    var dot = function (r) {
+      return '<span class="lvl" tabindex="0" data-tip="' + esc(esc(r.status.label + " · " + (r.status.detail || ""))) + '"><span class="sdot lv-' + r.status.level + '" aria-hidden="true"></span>' + esc(r.name) + "</span>";
+    };
+    var usable = rows.filter(function (r) { return r.status.level !== "red"; })
+      .sort(function (a, b) { return (a.status.level === "amber") - (b.status.level === "amber") || a.name.localeCompare(b.name); });
+    var waiting = rows.filter(function (r) { return r.status.level === "red" && r.status.resets_at; })
+      .sort(function (a, b) { return a.status.resets_at - b.status.resets_at; });
+    var topup = rows.filter(function (r) { return r.status.level === "red" && !r.status.resets_at; });
+    // Keep it to about one line: the first few (green first), then a "+N more" toggle.
+    var limit = window.matchMedia && window.matchMedia("(max-width: 719px)").matches ? 3 : 6;
+    var collapse = usable.length > limit + 1 && !S.availOpen;
+    var shown = collapse ? usable.slice(0, limit) : usable;
+    var named = function (r) {
+      var html = dot(r);
+      return r.status.short ? html.replace(/<\/span>$/, ' <span class="muted small">(' + esc(r.status.short) + ")</span></span>") : html;
+    };
+    var more = usable.length > limit + 1
+      ? '<button type="button" class="more-btn" id="avail-more" aria-expanded="' + !collapse + '"' +
+        (collapse ? ' title="' + esc(usable.slice(limit).map(function (r) { return r.name; }).join(", ")) + '">+' + (usable.length - limit) + " more" : ">show less") + "</button>"
+      : "";
+    var parts = ['<div class="avail-item"><span class="k">Available now</span>' +
+      (usable.length ? shown.map(named).join("") + more : '<span class="warnline">Nothing — every platform is at a limit</span>') + "</div>"];
+    if (waiting.length) {
+      var n = waiting[0];
+      parts.push('<div class="avail-item"><span class="k">Next back</span>' + dot(n) + 'in&nbsp;<b data-reset="' + n.status.resets_at + '">' + countdown(n.status.resets_at) + "</b>" +
+        (waiting.length > 1 ? '<span class="muted small">&nbsp;· then ' + esc(waiting[1].name) + " " + '<span data-reset="' + waiting[1].status.resets_at + '">' + countdown(waiting[1].status.resets_at) + "</span></span>" : "") + "</div>");
+    }
+    if (topup.length) parts.push('<div class="avail-item"><span class="k">Needs a top-up</span>' + topup.map(dot).join("") + "</div>");
+    el.innerHTML = parts.join("");
+    el.hidden = false;
+    bindTips(el);
+    var mb = $("#avail-more");
+    if (mb) mb.addEventListener("click", function () { S.availOpen = !S.availOpen; renderAvailability(S.state); });
   }
 
   function renderSpotlight(st) {
