@@ -237,14 +237,15 @@
       ? '<button type="button" class="more-btn" id="avail-more" aria-expanded="' + !collapse + '"' +
         (collapse ? ' title="' + esc(usable.slice(limit).map(function (r) { return r.name; }).join(", ")) + '">+' + (usable.length - limit) + " more" : ">show less") + "</button>"
       : "";
-    var parts = ['<div class="avail-item"><span class="k">Available now</span>' +
-      (usable.length ? shown.map(named).join("") + more : '<span class="warnline">Nothing — every platform is at a limit</span>') + "</div>"];
+    // One line per part: label column on the left, values wrap underneath each other on the right.
+    var line = function (label, html) { return '<div class="avail-item"><span class="k">' + label + '</span><span class="v">' + html + "</span></div>"; };
+    var parts = [line("Available now", usable.length ? shown.map(named).join("") + more : '<span class="warnline">Nothing — every platform is at a limit</span>')];
     if (waiting.length) {
       var n = waiting[0];
-      parts.push('<div class="avail-item"><span class="k">Next back</span>' + dot(n) + 'in&nbsp;<b data-reset="' + n.status.resets_at + '">' + countdown(n.status.resets_at) + "</b>" +
-        (waiting.length > 1 ? '<span class="muted small">&nbsp;· then ' + esc(waiting[1].name) + " " + '<span data-reset="' + waiting[1].status.resets_at + '">' + countdown(waiting[1].status.resets_at) + "</span></span>" : "") + "</div>");
+      parts.push(line("Next back", dot(n) + 'in&nbsp;<b data-reset="' + n.status.resets_at + '">' + countdown(n.status.resets_at) + "</b>" +
+        (waiting.length > 1 ? '<span class="muted small">&nbsp;· then ' + esc(waiting[1].name) + " " + '<span data-reset="' + waiting[1].status.resets_at + '">' + countdown(waiting[1].status.resets_at) + "</span></span>" : "")));
     }
-    if (topup.length) parts.push('<div class="avail-item"><span class="k">Needs a top-up</span>' + topup.map(dot).join("") + "</div>");
+    if (topup.length) parts.push(line("Needs a top-up", topup.map(dot).join("")));
     el.innerHTML = parts.join("");
     el.hidden = false;
     bindTips(el);
